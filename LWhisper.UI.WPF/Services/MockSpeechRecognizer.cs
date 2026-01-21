@@ -26,3 +26,4 @@ namespace LWhisper.UI.WPF.Services
 }
 
 
+
