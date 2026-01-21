@@ -128,3 +128,4 @@ MIT License
 
 Разработано с использованием .NET 8.0 и Whisper AI
 
+

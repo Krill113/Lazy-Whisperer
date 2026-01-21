@@ -6,7 +6,7 @@ using Serilog;
 namespace LWhisper.UI.WPF.Services
 {
     /// <summary>
-    /// Вставка текста в активное окно Windows через SendInput
+    /// Вставка текста в активное окно Windows через Clipboard + Ctrl+V
     /// </summary>
     public class WindowsTextInjector : ITextInjector
     {
@@ -19,15 +19,21 @@ namespace LWhisper.UI.WPF.Services
         [DllImport("user32.dll")]
         private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
-        [DllImport("user32.dll")]
-        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-
         [DllImport("user32.dll", CharSet = CharSet.Auto)]
         private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
 
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+
         private const int INPUT_KEYBOARD = 1;
-        private const uint KEYEVENTF_UNICODE = 0x0004;
         private const uint KEYEVENTF_KEYUP = 0x0002;
+        private const uint WM_PASTE = 0x0302;
+        private const byte VK_CONTROL = 0x11;
+        private const byte VK_V = 0x56;
+        private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
 
         private IntPtr _targetWindow;
         private IntPtr _ownWindow; // Окно самого приложения LWhisper
@@ -71,92 +77,107 @@ namespace LWhisper.UI.WPF.Services
                 return;
             }
 
+            if (string.IsNullOrEmpty(text))
+            {
+                Log.Warning("Текст для вставки пустой.");
+                return;
+            }
+
             await Task.Run(async () =>
             {
-                // Вернуть фокус на запомненное окно
-                var result = SetForegroundWindow(_targetWindow);
-                Log.Debug("SetForegroundWindow вернул: {Result}", result);
-                
-                await Task.Delay(500); // Увеличенная задержка для гарантированной активации
-                
-                // Проверить что окно действительно активно
-                var currentForeground = GetForegroundWindow();
-                if (currentForeground != _targetWindow)
+                // Получить название окна для логирования
+                var windowTitle = new StringBuilder(256);
+                GetWindowText(_targetWindow, windowTitle, 256);
+                Log.Information("Начинается вставка текста ({Length} символов) в окно: '{WindowTitle}' (Handle: {Handle})", 
+                    text.Length, windowTitle.ToString(), _targetWindow);
+
+                // Попытаться активировать окно с retry-логикой (до 3 попыток)
+                bool windowActivated = false;
+                for (int attempt = 1; attempt <= 3; attempt++)
                 {
-                    Log.Warning("Не удалось активировать целевое окно. Текущее: {Current}, Целевое: {Target}", 
-                        currentForeground, _targetWindow);
+                    Log.Debug("Попытка #{Attempt}: активация целевого окна...", attempt);
+                    var result = SetForegroundWindow(_targetWindow);
+                    
+                    // Увеличенная задержка для гарантированной активации окна
+                    await Task.Delay(800);
+                    
+                    // Проверить что окно действительно активно
+                    var currentForeground = GetForegroundWindow();
+                    if (currentForeground == _targetWindow)
+                    {
+                        Log.Debug("Целевое окно успешно активировано на попытке #{Attempt}", attempt);
+                        windowActivated = true;
+                        break;
+                    }
+                    else
+                    {
+                        var currentWindowTitle = new StringBuilder(256);
+                        GetWindowText(currentForeground, currentWindowTitle, 256);
+                        Log.Warning("Попытка #{Attempt}: окно не активировано. Текущее окно: '{CurrentWindow}' (Handle: {CurrentHandle})", 
+                            attempt, currentWindowTitle.ToString(), currentForeground);
+                        
+                        if (attempt < 3)
+                        {
+                            await Task.Delay(300); // Дополнительная задержка перед следующей попыткой
+                        }
+                    }
                 }
 
-                // Метод 1: Попробовать SendInput
-                Log.Debug("Попытка вставки через SendInput...");
-                bool success = false;
-                foreach (char c in text)
+                if (!windowActivated)
                 {
-                    var sent = SendUnicodeChar(c);
-                    if (sent > 0) success = true;
-                    Thread.Sleep(5); // Увеличенная задержка между символами
+                    Log.Error("Не удалось активировать целевое окно после 3 попыток. Вставка может не сработать.");
                 }
+
+                // Использовать Clipboard + Ctrl+V как основной и единственный метод
+                Log.Debug("Вставка текста через Clipboard + Ctrl+V...");
                 
-                // Метод 2: Если SendInput не сработал, использовать Clipboard + Ctrl+V
-                if (!success)
+                // Установить текст в буфер обмена
+                System.Windows.Application.Current.Dispatcher.Invoke(() =>
                 {
-                    Log.Debug("SendInput не сработал, использую Clipboard + Ctrl+V...");
-                    await Task.Delay(100);
-                    
-                    // Установить текст в буфер обмена
-                    System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                    try
                     {
                         System.Windows.Clipboard.SetText(text);
-                    });
-                    
-                    await Task.Delay(100);
-                    
-                    // Отправить Ctrl+V
-                    SendCtrlV();
-                }
+                        Log.Debug("Текст успешно скопирован в буфер обмена");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "Ошибка при копировании текста в буфер обмена");
+                        throw;
+                    }
+                });
                 
-                Log.Debug("Вставка текста завершена");
+                // Дополнительная задержка перед вставкой
+                await Task.Delay(200);
+                
+                // Попробовать 3 метода вставки для максимальной совместимости:
+                
+                // Метод 1: WM_PASTE сообщение (работает для большинства приложений)
+                Log.Debug("Метод 1: попытка вставки через WM_PASTE сообщение...");
+                var pasteResult = SendMessage(_targetWindow, WM_PASTE, IntPtr.Zero, IntPtr.Zero);
+                Log.Debug("SendMessage(WM_PASTE) вернул: {Result}", pasteResult);
+                
+                await Task.Delay(100);
+                
+                // Метод 2: keybd_event Ctrl+V (старый API, работает даже когда SendInput блокируется)
+                Log.Debug("Метод 2: попытка через keybd_event Ctrl+V...");
+                keybd_event(VK_CONTROL, 0, 0, UIntPtr.Zero); // Ctrl down
+                keybd_event(VK_V, 0, 0, UIntPtr.Zero); // V down
+                await Task.Delay(50);
+                keybd_event(VK_V, 0, KEYEVENTF_KEYUP, UIntPtr.Zero); // V up
+                keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, UIntPtr.Zero); // Ctrl up
+                Log.Debug("keybd_event Ctrl+V отправлен");
+                
+                await Task.Delay(100);
+                
+                // Метод 3: SendInput Ctrl+V (на случай если keybd_event тоже не сработал)
+                Log.Debug("Метод 3: дополнительная попытка через SendInput Ctrl+V...");
+                SendCtrlV();
+                
+                // Небольшая задержка для завершения вставки
+                await Task.Delay(100);
+                
+                Log.Information("Вставка текста завершена (использованы 3 метода)");
             });
-        }
-
-        private uint SendUnicodeChar(char c)
-        {
-            var inputs = new INPUT[2];
-
-            inputs[0] = new INPUT
-            {
-                type = INPUT_KEYBOARD,
-                u = new InputUnion
-                {
-                    ki = new KEYBDINPUT
-                    {
-                        wVk = 0,
-                        wScan = c,
-                        dwFlags = KEYEVENTF_UNICODE,
-                        time = 0,
-                        dwExtraInfo = IntPtr.Zero
-                    }
-                }
-            };
-
-            inputs[1] = new INPUT
-            {
-                type = INPUT_KEYBOARD,
-                u = new InputUnion
-                {
-                    ki = new KEYBDINPUT
-                    {
-                        wVk = 0,
-                        wScan = c,
-                        dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
-                        time = 0,
-                        dwExtraInfo = IntPtr.Zero
-                    }
-                }
-            };
-
-            var result = SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
-            return result;
         }
 
         private void SendCtrlV()

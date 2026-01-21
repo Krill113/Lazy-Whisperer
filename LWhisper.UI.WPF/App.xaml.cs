@@ -267,6 +267,13 @@ namespace LWhisper.UI.WPF
 
             try
             {
+                // Запомнить активное окно ПЕРЕД началом записи
+                // Это гарантирует работу в режиме Hotkey и при быстром клике на виджет
+                if (_textInjector is WindowsTextInjector winInjector)
+                {
+                    winInjector.RememberActiveWindow();
+                }
+
                 _isRecording = true;
                 _widget?.SetState(WidgetState.Recording);
                 _trayManager?.SetIcon(TrayIconState.Recording);

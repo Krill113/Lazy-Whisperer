@@ -7,3 +7,4 @@ https://huggingface.co/ggerganov/whisper.cpp/tree/main
 
 После скачивания поместите файл в эту папку.
 
+
