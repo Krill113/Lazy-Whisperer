@@ -27,20 +27,23 @@ namespace LWhisper.UI.WPF.Views
         /// </summary>
         public void SetState(WidgetState state)
         {
-            _currentState = state;
-
-            switch (state)
+            Dispatcher.Invoke(() =>
             {
-                case WidgetState.Idle:
-                    SetIdleState();
-                    break;
-                case WidgetState.Recording:
-                    SetRecordingState();
-                    break;
-                case WidgetState.Processing:
-                    SetProcessingState();
-                    break;
-            }
+                _currentState = state;
+
+                switch (state)
+                {
+                    case WidgetState.Idle:
+                        SetIdleState();
+                        break;
+                    case WidgetState.Recording:
+                        SetRecordingState();
+                        break;
+                    case WidgetState.Processing:
+                        SetProcessingState();
+                        break;
+                }
+            });
         }
 
         private void SetIdleState()
