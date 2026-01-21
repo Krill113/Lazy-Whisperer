@@ -1,0 +1,33 @@
+<Window x:Class="LWhisper.UI.WPF.Views.PreviewWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Распознанный текст"
+        Width="400" Height="200"
+        WindowStyle="ToolWindow"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ResizeMode="CanResize">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBox x:Name="TextBox"
+                 Grid.Row="0"
+                 TextWrapping="Wrap"
+                 AcceptsReturn="True"
+                 VerticalScrollBarVisibility="Auto"
+                 FontSize="14"
+                 Padding="5"
+                 TextChanged="TextBox_TextChanged"
+                 KeyDown="TextBox_KeyDown"/>
+
+        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <TextBlock x:Name="TimerText" VerticalAlignment="Center" Margin="0,0,10,0" Foreground="Gray"/>
+            <Button x:Name="CopyButton" Content="Копировать" Width="100" Margin="5,0" Click="CopyButton_Click"/>
+            <Button x:Name="InsertButton" Content="Вставить" Width="100" Margin="5,0" Click="InsertButton_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>
+

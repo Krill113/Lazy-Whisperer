@@ -1,0 +1,55 @@
+<Window x:Class="LWhisper.UI.WPF.Views.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Настройки LWhisper"
+        Width="500" Height="400"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize">
+    <Grid Margin="15">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <GroupBox Grid.Row="0" Header="Режим записи" Margin="0,0,0,10">
+            <StackPanel Margin="10">
+                <RadioButton x:Name="ToggleModeRadio" Content="Toggle (клик - начало, клик - конец)" GroupName="Mode" IsChecked="True" Margin="0,5"/>
+                <RadioButton x:Name="PushToTalkRadio" Content="Push-to-Talk (зажатие кнопки мыши)" GroupName="Mode" Margin="0,5"/>
+                <RadioButton x:Name="HotkeyRadio" Content="Горячая клавиша" GroupName="Mode" Margin="0,5"/>
+            </StackPanel>
+        </GroupBox>
+
+        <GroupBox Grid.Row="1" Header="Горячая клавиша" Margin="0,0,0,10">
+            <StackPanel Margin="10">
+                <TextBox x:Name="HotkeyTextBox" Text="Ctrl+Shift+Space" IsReadOnly="True" Background="#F0F0F0"/>
+                <TextBlock Text="(для изменения используйте Toggle или Push-to-Talk)" FontSize="10" Foreground="Gray" Margin="0,5,0,0"/>
+            </StackPanel>
+        </GroupBox>
+
+        <GroupBox Grid.Row="2" Header="Автовставка" Margin="0,0,0,10">
+            <StackPanel Margin="10">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Задержка перед вставкой:" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <TextBox x:Name="AutoInsertDelayTextBox" Width="50" Text="2" VerticalAlignment="Center"/>
+                    <TextBlock Text="сек" VerticalAlignment="Center" Margin="5,0,0,0"/>
+                </StackPanel>
+            </StackPanel>
+        </GroupBox>
+
+        <GroupBox Grid.Row="3" Header="Устройство записи" Margin="0,0,0,10">
+            <StackPanel Margin="10">
+                <ComboBox x:Name="AudioDeviceComboBox"/>
+            </StackPanel>
+        </GroupBox>
+
+        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Сохранить" Width="100" Margin="5" Click="SaveButton_Click"/>
+            <Button Content="Отмена" Width="100" Margin="5" Click="CancelButton_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>
+
