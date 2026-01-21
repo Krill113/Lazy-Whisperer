@@ -40,6 +40,7 @@ namespace LWhisper.UI.WPF
 
             Log.Logger = new LoggerConfiguration()
                 .MinimumLevel.Debug()
+                .WriteTo.Console()
                 .WriteTo.File(logPath,
                     rollingInterval: RollingInterval.Day,
                     fileSizeLimitBytes: 10_000_000,
@@ -204,9 +205,6 @@ namespace LWhisper.UI.WPF
                 var result = await _speechRecognizer!.RecognizeAsync(audioData);
                 Log.Information("Распознавание завершено: {Success}, Текст: {Text}", result.Success, result.Text);
 
-                _widget?.SetState(WidgetState.Idle);
-                _trayManager?.SetIcon(TrayIconState.Idle);
-
                 if (result.Success && !string.IsNullOrEmpty(result.Text))
                 {
                     ShowPreviewWindow(result.Text);
@@ -214,6 +212,8 @@ namespace LWhisper.UI.WPF
                 else
                 {
                     Log.Warning("Распознавание не дало результата");
+                    _widget?.SetState(WidgetState.Idle);
+                    _trayManager?.SetIcon(TrayIconState.Idle);
                 }
             }
             catch (Exception ex)
@@ -234,14 +234,27 @@ namespace LWhisper.UI.WPF
                 {
                     try
                     {
+                        Log.Debug("Начало вставки текста");
                         await _textInjector!.InjectTextAsync(textToInsert);
                         Log.Debug("Текст вставлен успешно");
+                        
+                        _widget?.SetState(WidgetState.Idle);
+                        _trayManager?.SetIcon(TrayIconState.Idle);
                     }
                     catch (Exception ex)
                     {
                         Log.Error(ex, "Ошибка вставки текста");
+                        _widget?.SetState(WidgetState.Idle);
+                        _trayManager?.SetIcon(TrayIconState.Idle);
                         MessageBox.Show($"Ошибка вставки: {ex.Message}", "LWhisper", MessageBoxButton.OK, MessageBoxImage.Error);
                     }
+                };
+
+                _previewWindow.Closed += (s, e) =>
+                {
+                    Log.Debug("PreviewWindow закрыто");
+                    _widget?.SetState(WidgetState.Idle);
+                    _trayManager?.SetIcon(TrayIconState.Idle);
                 };
 
                 if (_widget != null)
@@ -250,11 +263,14 @@ namespace LWhisper.UI.WPF
                     _previewWindow.Top = _widget.Top + _widget.Height + 10;
                 }
 
+                Log.Debug("Показ PreviewWindow");
                 _previewWindow.ShowWithText(text, _settings.AutoInsertDelaySeconds);
             }
             catch (Exception ex)
             {
                 Log.Error(ex, "Ошибка показа окна предпросмотра");
+                _widget?.SetState(WidgetState.Idle);
+                _trayManager?.SetIcon(TrayIconState.Idle);
             }
         }
 
