@@ -1,9 +1,11 @@
-﻿using System.Windows;
+﻿using System.IO;
+using System.Windows;
 using System.Windows.Interop;
 using LWhisper.UI.WPF.Views;
 using LWhisper.UI.WPF.Services;
 using LWhisper.Core.Interfaces;
 using LWhisper.Core.Models;
+using Serilog;
 
 namespace LWhisper.UI.WPF
 {
@@ -19,48 +21,82 @@ namespace LWhisper.UI.WPF
         private IAudioRecorder? _audioRecorder;
         private IHotkeyManager? _hotkeyManager;
         private TrayIconManager? _trayManager;
+        private SettingsManager? _settingsManager;
         private AppSettings _settings;
         private bool _isRecording;
 
         public App()
         {
             _settings = new AppSettings();
+            InitializeLogging();
+        }
+
+        private void InitializeLogging()
+        {
+            var logPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "LWhisper", "logs", "log-.txt"
+            );
+
+            Log.Logger = new LoggerConfiguration()
+                .MinimumLevel.Debug()
+                .WriteTo.File(logPath,
+                    rollingInterval: RollingInterval.Day,
+                    fileSizeLimitBytes: 10_000_000,
+                    retainedFileCountLimit: 7)
+                .CreateLogger();
+
+            Log.Information("LWhisper запущен");
         }
 
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
 
-            _speechRecognizer = new MockSpeechRecognizer();
-            _textInjector = new WindowsTextInjector();
-            _audioRecorder = new NAudioRecorder();
-            _hotkeyManager = new WindowsHotkeyManager();
-
-            _trayManager = new TrayIconManager();
-            _trayManager.Initialize();
-            _trayManager.ShowMicrophoneRequested += OnShowMicrophoneRequested;
-            _trayManager.SettingsRequested += OnSettingsRequested;
-            _trayManager.ExitRequested += OnExitRequested;
-
-            _widget = new FloatingMicrophoneWidget
+            try
             {
-                Left = _settings.WidgetPositionX,
-                Top = _settings.WidgetPositionY
-            };
+                _settingsManager = new SettingsManager();
+                _settings = _settingsManager.Load();
 
-            _widget.RecordingStarted += OnRecordingStarted;
-            _widget.RecordingStopped += OnRecordingStopped;
-            _widget.Show();
+                _speechRecognizer = new MockSpeechRecognizer();
+                _textInjector = new WindowsTextInjector();
+                _audioRecorder = new NAudioRecorder();
+                _hotkeyManager = new WindowsHotkeyManager();
 
-            var hwnd = new WindowInteropHelper(_widget).Handle;
-            if (_hotkeyManager is WindowsHotkeyManager whm)
-            {
-                whm.SetWindowHandle(hwnd);
+                _trayManager = new TrayIconManager();
+                _trayManager.Initialize();
+                _trayManager.ShowMicrophoneRequested += OnShowMicrophoneRequested;
+                _trayManager.SettingsRequested += OnSettingsRequested;
+                _trayManager.ExitRequested += OnExitRequested;
+
+                _widget = new FloatingMicrophoneWidget
+                {
+                    Left = _settings.WidgetPositionX,
+                    Top = _settings.WidgetPositionY
+                };
+
+                _widget.RecordingStarted += OnRecordingStarted;
+                _widget.RecordingStopped += OnRecordingStopped;
+                _widget.Show();
+
+                var hwnd = new WindowInteropHelper(_widget).Handle;
+                if (_hotkeyManager is WindowsHotkeyManager whm)
+                {
+                    whm.SetWindowHandle(hwnd);
+                }
+
+                if (_settings.RecordingMode == RecordingMode.Hotkey)
+                {
+                    _hotkeyManager.RegisterHotkey(_settings.HotkeyBinding ?? "Ctrl+Shift+Space", ToggleRecording);
+                }
+
+                Log.Information("Приложение инициализировано");
             }
-
-            if (_settings.RecordingMode == RecordingMode.Hotkey)
+            catch (Exception ex)
             {
-                _hotkeyManager.RegisterHotkey(_settings.HotkeyBinding ?? "Ctrl+Shift+Space", ToggleRecording);
+                Log.Fatal(ex, "Ошибка при запуске приложения");
+                MessageBox.Show($"Ошибка запуска: {ex.Message}", "LWhisper", MessageBoxButton.OK, MessageBoxImage.Error);
+                Shutdown();
             }
         }
 
@@ -68,17 +104,28 @@ namespace LWhisper.UI.WPF
         {
             _widget?.Show();
             _widget?.Activate();
+            Log.Debug("Показан виджет микрофона");
         }
 
         private void OnSettingsRequested()
         {
-            var devices = _audioRecorder?.GetAvailableDevices() ?? new List<string>();
-            var settingsWindow = new SettingsWindow(_settings, devices);
-
-            if (settingsWindow.ShowDialog() == true)
+            try
             {
-                _settings = settingsWindow.Settings;
-                ApplySettings();
+                var devices = _audioRecorder?.GetAvailableDevices() ?? new List<string>();
+                var settingsWindow = new SettingsWindow(_settings, devices);
+
+                if (settingsWindow.ShowDialog() == true)
+                {
+                    _settings = settingsWindow.Settings;
+                    ApplySettings();
+                    _settingsManager?.Save(_settings);
+                    Log.Information("Настройки сохранены");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Ошибка при открытии настроек");
+                MessageBox.Show($"Ошибка настроек: {ex.Message}", "LWhisper", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -90,6 +137,8 @@ namespace LWhisper.UI.WPF
             {
                 _hotkeyManager?.RegisterHotkey(_settings.HotkeyBinding ?? "Ctrl+Shift+Space", ToggleRecording);
             }
+
+            Log.Information("Настройки применены: режим {Mode}", _settings.RecordingMode);
         }
 
         private void OnExitRequested()
@@ -98,8 +147,10 @@ namespace LWhisper.UI.WPF
             {
                 _settings.WidgetPositionX = _widget.Left;
                 _settings.WidgetPositionY = _widget.Top;
+                _settingsManager?.Save(_settings);
             }
 
+            Log.Information("Выход из приложения");
             Shutdown();
         }
 
@@ -119,10 +170,22 @@ namespace LWhisper.UI.WPF
         {
             if (_isRecording) return;
 
-            _isRecording = true;
-            _widget?.SetState(WidgetState.Recording);
-            _trayManager?.SetIcon(TrayIconState.Recording);
-            _audioRecorder?.StartRecording();
+            try
+            {
+                _isRecording = true;
+                _widget?.SetState(WidgetState.Recording);
+                _trayManager?.SetIcon(TrayIconState.Recording);
+                _audioRecorder?.StartRecording();
+                Log.Debug("Запись начата");
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Ошибка начала записи");
+                _isRecording = false;
+                _widget?.SetState(WidgetState.Idle);
+                _trayManager?.SetIcon(TrayIconState.Idle);
+                MessageBox.Show($"Ошибка записи: {ex.Message}", "LWhisper", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         private async void OnRecordingStopped()
@@ -136,7 +199,10 @@ namespace LWhisper.UI.WPF
             try
             {
                 var audioData = await _audioRecorder!.StopRecordingAsync();
+                Log.Debug("Запись остановлена, длительность: {Duration}", audioData.Duration);
+
                 var result = await _speechRecognizer!.RecognizeAsync(audioData);
+                Log.Information("Распознавание завершено: {Success}, Текст: {Text}", result.Success, result.Text);
 
                 _widget?.SetState(WidgetState.Idle);
                 _trayManager?.SetIcon(TrayIconState.Idle);
@@ -145,35 +211,58 @@ namespace LWhisper.UI.WPF
                 {
                     ShowPreviewWindow(result.Text);
                 }
+                else
+                {
+                    Log.Warning("Распознавание не дало результата");
+                }
             }
-            catch
+            catch (Exception ex)
             {
+                Log.Error(ex, "Ошибка при распознавании");
                 _widget?.SetState(WidgetState.Idle);
                 _trayManager?.SetIcon(TrayIconState.Idle);
+                MessageBox.Show($"Ошибка распознавания: {ex.Message}", "LWhisper", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
         private void ShowPreviewWindow(string text)
         {
-            _previewWindow = new PreviewWindow();
-            _previewWindow.InsertRequested += async (textToInsert) =>
+            try
             {
-                await _textInjector!.InjectTextAsync(textToInsert);
-            };
+                _previewWindow = new PreviewWindow();
+                _previewWindow.InsertRequested += async (textToInsert) =>
+                {
+                    try
+                    {
+                        await _textInjector!.InjectTextAsync(textToInsert);
+                        Log.Debug("Текст вставлен успешно");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "Ошибка вставки текста");
+                        MessageBox.Show($"Ошибка вставки: {ex.Message}", "LWhisper", MessageBoxButton.OK, MessageBoxImage.Error);
+                    }
+                };
 
-            if (_widget != null)
-            {
-                _previewWindow.Left = _widget.Left;
-                _previewWindow.Top = _widget.Top + _widget.Height + 10;
+                if (_widget != null)
+                {
+                    _previewWindow.Left = _widget.Left;
+                    _previewWindow.Top = _widget.Top + _widget.Height + 10;
+                }
+
+                _previewWindow.ShowWithText(text, _settings.AutoInsertDelaySeconds);
             }
-
-            _previewWindow.ShowWithText(text, _settings.AutoInsertDelaySeconds);
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Ошибка показа окна предпросмотра");
+            }
         }
 
         protected override void OnExit(ExitEventArgs e)
         {
             _hotkeyManager?.UnregisterHotkey();
             _trayManager?.Dispose();
+            Log.CloseAndFlush();
             base.OnExit(e);
         }
     }
