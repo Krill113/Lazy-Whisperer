@@ -77,7 +77,11 @@ LWhisper.UI.WPF        # Windows UI и специфичные сервисы
 - `/LWhisper.Core` - Базовые интерфейсы без зависимостей от платформы
 - `/LWhisper.SpeechEngine` - Интеграция с Whisper.net
 - `/LWhisper.UI.WPF` - WPF приложение и Windows-специфичный код
-- `/Models` - Папка для моделей Whisper
+
+### Модели Whisper
+
+Модели автоматически скачиваются через настройки в:
+`%APPDATA%\LWhisper\Models\`
 
 ### Зависимости
 

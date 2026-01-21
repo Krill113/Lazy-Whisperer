@@ -92,8 +92,7 @@ namespace LWhisper.UI.WPF.Views
 
         private string GetModelPath(string modelSize)
         {
-            var modelsDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Models");
-            return Path.Combine(modelsDir, $"ggml-{modelSize}.bin");
+            return Path.Combine(LWhisper.UI.WPF.Services.AppPaths.ModelsFolder, $"ggml-{modelSize}.bin");
         }
 
         private async void DownloadModelButton_Click(object sender, RoutedEventArgs e)
@@ -120,11 +119,7 @@ namespace LWhisper.UI.WPF.Views
                 // URL модели на HuggingFace
                 var modelUrl = $"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{modelSize}.bin";
 
-                var modelsDir = Path.GetDirectoryName(modelPath);
-                if (!Directory.Exists(modelsDir))
-                {
-                    Directory.CreateDirectory(modelsDir!);
-                }
+                // Папка уже создана через AppPaths.ModelsFolder
 
                 using (var response = await _httpClient.GetAsync(modelUrl, HttpCompletionOption.ResponseHeadersRead))
                 {

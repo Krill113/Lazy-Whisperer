@@ -130,7 +130,7 @@ namespace LWhisper.UI.WPF
         /// </summary>
         private void InitializeSpeechRecognizer()
         {
-            var modelPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Models", $"ggml-{_settings.WhisperModelSize}.bin");
+            var modelPath = Path.Combine(Services.AppPaths.ModelsFolder, $"ggml-{_settings.WhisperModelSize}.bin");
             
             if (File.Exists(modelPath))
             {

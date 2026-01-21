@@ -138,7 +138,7 @@ Text appears in active window
 
 - **Настройки**: `%APPDATA%\LWhisper\settings.json`
 - **Логи**: `%APPDATA%\LWhisper\logs\log-YYYYMMDD.txt`
-- **Модель**: `Models/ggml-small.bin`
+- **Модели**: `%APPDATA%\LWhisper\Models\ggml-{size}.bin`
 
 ### Настройки по умолчанию
 
