@@ -14,4 +14,8 @@
     <ProjectReference Include="..\LWhisper.SpeechEngine\LWhisper.SpeechEngine.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="NAudio" Version="2.2.1" />
+  </ItemGroup>
+
 </Project>

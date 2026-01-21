@@ -2,7 +2,6 @@
 using LWhisper.UI.WPF.Views;
 using LWhisper.UI.WPF.Services;
 using LWhisper.Core.Interfaces;
-using LWhisper.Core.Models;
 
 namespace LWhisper.UI.WPF
 {
@@ -14,6 +13,7 @@ namespace LWhisper.UI.WPF
         private FloatingMicrophoneWidget? _widget;
         private ISpeechRecognizer? _speechRecognizer;
         private ITextInjector? _textInjector;
+        private IAudioRecorder? _audioRecorder;
         private bool _isRecording;
 
         protected override void OnStartup(StartupEventArgs e)
@@ -22,6 +22,7 @@ namespace LWhisper.UI.WPF
 
             _speechRecognizer = new MockSpeechRecognizer();
             _textInjector = new WindowsTextInjector();
+            _audioRecorder = new NAudioRecorder();
 
             _widget = new FloatingMicrophoneWidget
             {
@@ -35,12 +36,13 @@ namespace LWhisper.UI.WPF
             _widget.Show();
         }
 
-        private async void OnRecordingStarted()
+        private void OnRecordingStarted()
         {
             if (_isRecording) return;
 
             _isRecording = true;
             _widget?.SetState(WidgetState.Recording);
+            _audioRecorder?.StartRecording();
         }
 
         private async void OnRecordingStopped()
@@ -52,10 +54,10 @@ namespace LWhisper.UI.WPF
 
             try
             {
-                var audioData = new AudioData();
+                var audioData = await _audioRecorder!.StopRecordingAsync();
                 var result = await _speechRecognizer!.RecognizeAsync(audioData);
 
-                if (result.Success)
+                if (result.Success && !string.IsNullOrEmpty(result.Text))
                 {
                     await _textInjector!.InjectTextAsync(result.Text);
                 }
