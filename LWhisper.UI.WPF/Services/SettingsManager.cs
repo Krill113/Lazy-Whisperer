@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using LWhisper.Core.Models;
+using Serilog;
 
 namespace LWhisper.UI.WPF.Services
 {
@@ -39,7 +40,17 @@ namespace LWhisper.UI.WPF.Services
                 if (File.Exists(_settingsPath))
                 {
                     var json = File.ReadAllText(_settingsPath);
-                    return JsonSerializer.Deserialize<AppSettings>(json, _jsonOptions) ?? new AppSettings();
+                    var settings = JsonSerializer.Deserialize<AppSettings>(json, _jsonOptions) ?? new AppSettings();
+                    
+                    // Миграция: если позиция 0,0 - считать её "не установленной" (старые настройки)
+                    if (settings.WidgetPositionX == 0 && settings.WidgetPositionY == 0)
+                    {
+                        settings.WidgetPositionX = -1;
+                        settings.WidgetPositionY = -1;
+                        Log.Information("Миграция настроек: сброшена позиция виджета 0,0 -> -1,-1");
+                    }
+                    
+                    return settings;
                 }
             }
             catch
