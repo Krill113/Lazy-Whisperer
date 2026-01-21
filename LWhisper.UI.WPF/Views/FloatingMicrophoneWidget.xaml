@@ -11,7 +11,8 @@
         ResizeMode="NoResize"
         MouseDown="Window_MouseDown"
         MouseMove="Window_MouseMove"
-        MouseUp="Window_MouseUp">
+        MouseUp="Window_MouseUp"
+        MouseEnter="Window_MouseEnter">
     <Grid>
         <!-- Основной круг микрофона -->
         <Ellipse x:Name="MicrophoneButton" 

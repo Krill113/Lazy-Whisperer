@@ -20,7 +20,7 @@ namespace LWhisper.UI.WPF.Views
         public event Action? RecordingStopped;
         public event Action<double, double>? PositionChanged;
         public event Action? ShowTextRequested;
-        public event Action? BeforeRecordingStarted;
+        public event Action? RememberTargetWindow;
 
         public FloatingMicrophoneWidget()
         {
@@ -108,18 +108,18 @@ namespace LWhisper.UI.WPF.Views
             rotateTransform.BeginAnimation(RotateTransform.AngleProperty, animation);
         }
 
+        private void Window_MouseEnter(object sender, MouseEventArgs e)
+        {
+            // Запомнить активное окно при наведении мыши (ДО того как виджет получит фокус при клике)
+            RememberTargetWindow?.Invoke();
+        }
+
         private void Window_MouseDown(object sender, MouseButtonEventArgs e)
         {
             if (e.ChangedButton == MouseButton.Left)
             {
                 _clickPosition = e.GetPosition(this);
                 _isDragging = false;
-                
-                // Вызвать событие ДО того как виджет получит фокус
-                if (_currentState == WidgetState.Idle)
-                {
-                    BeforeRecordingStarted?.Invoke();
-                }
             }
         }
 

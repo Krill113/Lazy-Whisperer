@@ -94,6 +94,7 @@ namespace LWhisper.UI.WPF
                 _widget.RecordingStopped += OnRecordingStopped;
                 _widget.PositionChanged += OnWidgetPositionChanged;
                 _widget.ShowTextRequested += OnShowTextRequested;
+                _widget.RememberTargetWindow += OnRememberTargetWindow;
                 _widget.Show();
 
                 var hwnd = new WindowInteropHelper(_widget).Handle;
@@ -252,14 +253,18 @@ namespace LWhisper.UI.WPF
             }
         }
 
-        private void OnBeforeRecordingStarted()
+        private void OnRememberTargetWindow()
         {
-            // Запомнить активное окно ДО того как виджет получит фокус
+            // Запомнить активное окно при наведении мыши на виджет
             if (_textInjector is WindowsTextInjector winInjector)
             {
                 winInjector.RememberActiveWindow();
-                Log.Debug("Запомнено активное окно ДО клика на виджет");
             }
+        }
+
+        private void OnBeforeRecordingStarted()
+        {
+            // Этот метод больше не используется, но оставлю для совместимости
         }
 
         private void OnRecordingStarted()
