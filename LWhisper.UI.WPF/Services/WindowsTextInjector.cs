@@ -21,10 +21,29 @@ namespace LWhisper.UI.WPF.Services
         private const uint KEYEVENTF_UNICODE = 0x0004;
         private const uint KEYEVENTF_KEYUP = 0x0002;
 
+        private IntPtr _targetWindow;
+
+        /// <summary>
+        /// Запомнить текущее активное окно для последующей вставки
+        /// </summary>
+        public void RememberActiveWindow()
+        {
+            _targetWindow = GetForegroundWindow();
+        }
+
         public async Task InjectTextAsync(string text)
         {
-            await Task.Run(() =>
+            if (_targetWindow == IntPtr.Zero)
             {
+                return;
+            }
+
+            await Task.Run(async () =>
+            {
+                // Вернуть фокус на запомненное окно
+                SetForegroundWindow(_targetWindow);
+                await Task.Delay(100); // Дать время окну активироваться
+
                 foreach (char c in text)
                 {
                     SendUnicodeChar(c);

@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Drawing;
 using Hardcodet.Wpf.TaskbarNotification;
 
 namespace LWhisper.UI.WPF.Services
@@ -18,7 +19,7 @@ namespace LWhisper.UI.WPF.Services
         {
             _trayIcon = new TaskbarIcon
             {
-                Icon = new System.Drawing.Icon(System.Drawing.SystemIcons.Application, 40, 40),
+                Icon = CreateMicrophoneIcon(),
                 ToolTipText = "LWhisper - Голосовой ввод"
             };
 
@@ -40,6 +41,35 @@ namespace LWhisper.UI.WPF.Services
 
             _trayIcon.ContextMenu = contextMenu;
             _trayIcon.TrayMouseDoubleClick += (s, e) => ShowMicrophoneRequested?.Invoke();
+        }
+
+        private Icon CreateMicrophoneIcon()
+        {
+            // Создаем простую иконку микрофона программно
+            using (var bitmap = new Bitmap(32, 32))
+            using (var g = Graphics.FromImage(bitmap))
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                g.Clear(Color.Transparent);
+
+                // Рисуем микрофон
+                using (var brush = new SolidBrush(Color.FromArgb(74, 144, 226)))
+                {
+                    // Корпус микрофона
+                    g.FillEllipse(brush, 10, 6, 12, 16);
+                    // Стойка
+                    g.FillRectangle(brush, 15, 22, 2, 6);
+                    // Основание
+                    g.FillRectangle(brush, 12, 27, 8, 2);
+                    // Дуга
+                    using (var pen = new Pen(brush, 2))
+                    {
+                        g.DrawArc(pen, 6, 16, 20, 12, 0, -180);
+                    }
+                }
+
+                return Icon.FromHandle(bitmap.GetHicon());
+            }
         }
 
         public void SetIcon(TrayIconState state)

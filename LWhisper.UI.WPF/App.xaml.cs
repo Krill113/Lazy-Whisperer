@@ -70,10 +70,14 @@ namespace LWhisper.UI.WPF
                 _trayManager.SettingsRequested += OnSettingsRequested;
                 _trayManager.ExitRequested += OnExitRequested;
 
+                // Позиция виджета - правый нижний угол по умолчанию
+                double defaultX = SystemParameters.PrimaryScreenWidth - 150;
+                double defaultY = SystemParameters.PrimaryScreenHeight - 150;
+
                 _widget = new FloatingMicrophoneWidget
                 {
-                    Left = _settings.WidgetPositionX,
-                    Top = _settings.WidgetPositionY
+                    Left = _settings.WidgetPositionX > 0 ? _settings.WidgetPositionX : defaultX,
+                    Top = _settings.WidgetPositionY > 0 ? _settings.WidgetPositionY : defaultY
                 };
 
                 _widget.RecordingStarted += OnRecordingStarted;
@@ -173,6 +177,13 @@ namespace LWhisper.UI.WPF
 
             try
             {
+                // ВАЖНО: Запомнить активное окно ДО начала записи
+                if (_textInjector is WindowsTextInjector winInjector)
+                {
+                    winInjector.RememberActiveWindow();
+                    Log.Debug("Запомнено активное окно");
+                }
+
                 _isRecording = true;
                 _widget?.SetState(WidgetState.Recording);
                 _trayManager?.SetIcon(TrayIconState.Recording);
