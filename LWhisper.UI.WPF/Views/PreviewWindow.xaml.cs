@@ -38,6 +38,18 @@ namespace LWhisper.UI.WPF.Views
             Activate();
         }
 
+        /// <summary>
+        /// Обновить текст в уже открытом окне
+        /// </summary>
+        public void UpdateText(string text)
+        {
+            TextBox.Text = text;
+            _userEdited = false;
+            _secondsRemaining = 2; // Сбросить таймер
+            StopAutoInsertTimer();
+            StartAutoInsertTimer();
+        }
+
         private void StartAutoInsertTimer()
         {
             _autoInsertTimer = new DispatcherTimer

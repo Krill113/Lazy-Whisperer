@@ -16,6 +16,7 @@ namespace LWhisper.UI.WPF.Services
         private readonly int _channels = 1;
         private readonly int _bitsPerSample = 16;
         private bool _isRecording;
+        private int _deviceNumber = 0; // Default device
 
         public bool IsRecording => _isRecording;
 
@@ -28,7 +29,8 @@ namespace LWhisper.UI.WPF.Services
 
             _waveIn = new WaveInEvent
             {
-                WaveFormat = new WaveFormat(_sampleRate, _bitsPerSample, _channels)
+                WaveFormat = new WaveFormat(_sampleRate, _bitsPerSample, _channels),
+                DeviceNumber = _deviceNumber
             };
 
             _waveIn.DataAvailable += OnDataAvailable;
@@ -74,6 +76,22 @@ namespace LWhisper.UI.WPF.Services
                 devices.Add(capabilities.ProductName);
             }
             return devices;
+        }
+
+        /// <summary>
+        /// Установить устройство записи по имени
+        /// </summary>
+        public void SetDevice(string deviceName)
+        {
+            for (int i = 0; i < WaveInEvent.DeviceCount; i++)
+            {
+                var capabilities = WaveInEvent.GetCapabilities(i);
+                if (capabilities.ProductName == deviceName)
+                {
+                    _deviceNumber = i;
+                    break;
+                }
+            }
         }
 
         private void OnDataAvailable(object? sender, WaveInEventArgs e)

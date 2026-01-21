@@ -1,5 +1,7 @@
 using System.Runtime.InteropServices;
+using System.Text;
 using LWhisper.Core.Interfaces;
+using Serilog;
 
 namespace LWhisper.UI.WPF.Services
 {
@@ -17,18 +19,48 @@ namespace LWhisper.UI.WPF.Services
         [DllImport("user32.dll")]
         private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
         private const int INPUT_KEYBOARD = 1;
         private const uint KEYEVENTF_UNICODE = 0x0004;
         private const uint KEYEVENTF_KEYUP = 0x0002;
 
         private IntPtr _targetWindow;
+        private IntPtr _ownWindow; // Окно самого приложения LWhisper
+
+        /// <summary>
+        /// Установить окно самого приложения (чтобы не запоминать его как целевое)
+        /// </summary>
+        public void SetOwnWindow(IntPtr ownWindow)
+        {
+            _ownWindow = ownWindow;
+        }
 
         /// <summary>
         /// Запомнить текущее активное окно для последующей вставки
         /// </summary>
         public void RememberActiveWindow()
         {
-            _targetWindow = GetForegroundWindow();
+            var foregroundWindow = GetForegroundWindow();
+            
+            // Логирование для отладки
+            var windowTitle = new StringBuilder(256);
+            GetWindowText(foregroundWindow, windowTitle, 256);
+            
+            // Не запоминать собственное окно
+            if (foregroundWindow != _ownWindow && foregroundWindow != IntPtr.Zero)
+            {
+                _targetWindow = foregroundWindow;
+                Log.Debug("Запомнено целевое окно: '{WindowTitle}' (Handle: {Handle})", windowTitle.ToString(), foregroundWindow);
+            }
+            else
+            {
+                Log.Warning("Попытка запомнить собственное окно или нулевой handle. Игнорируется.");
+            }
         }
 
         public async Task InjectTextAsync(string text)
@@ -42,7 +74,7 @@ namespace LWhisper.UI.WPF.Services
             {
                 // Вернуть фокус на запомненное окно
                 SetForegroundWindow(_targetWindow);
-                await Task.Delay(100); // Дать время окну активироваться
+                await Task.Delay(250); // Увеличенная задержка для гарантированной активации
 
                 foreach (char c in text)
                 {

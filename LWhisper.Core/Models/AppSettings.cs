@@ -26,14 +26,14 @@ namespace LWhisper.Core.Models
         public string? SelectedAudioDevice { get; set; }
 
         /// <summary>
-        /// Позиция виджета X (0 = использовать дефолт)
+        /// Позиция виджета X (-1 = использовать дефолт)
         /// </summary>
-        public double WidgetPositionX { get; set; } = 0;
+        public double WidgetPositionX { get; set; } = -1;
 
         /// <summary>
-        /// Позиция виджета Y (0 = использовать дефолт)
+        /// Позиция виджета Y (-1 = использовать дефолт)
         /// </summary>
-        public double WidgetPositionY { get; set; } = 0;
+        public double WidgetPositionY { get; set; } = -1;
 
         /// <summary>
         /// Язык распознавания (auto/ru/en)

@@ -28,6 +28,11 @@ namespace LWhisper.Core.Interfaces
         /// Получить список доступных устройств записи
         /// </summary>
         List<string> GetAvailableDevices();
+
+        /// <summary>
+        /// Установить устройство записи
+        /// </summary>
+        void SetDevice(string deviceName);
     }
 }
 

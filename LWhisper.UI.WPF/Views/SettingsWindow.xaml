@@ -2,54 +2,78 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Настройки LWhisper"
-        Width="500" Height="400"
+        Width="550" Height="600"
         WindowStartupLocation="CenterScreen"
-        ResizeMode="NoResize">
-    <Grid Margin="15">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
+        ResizeMode="CanResize">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="15">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
 
-        <GroupBox Grid.Row="0" Header="Режим записи" Margin="0,0,0,10">
-            <StackPanel Margin="10">
-                <RadioButton x:Name="ToggleModeRadio" Content="Toggle (клик - начало, клик - конец)" GroupName="Mode" IsChecked="True" Margin="0,5"/>
-                <RadioButton x:Name="PushToTalkRadio" Content="Push-to-Talk (зажатие кнопки мыши)" GroupName="Mode" Margin="0,5"/>
-                <RadioButton x:Name="HotkeyRadio" Content="Горячая клавиша" GroupName="Mode" Margin="0,5"/>
-            </StackPanel>
-        </GroupBox>
-
-        <GroupBox Grid.Row="1" Header="Горячая клавиша" Margin="0,0,0,10">
-            <StackPanel Margin="10">
-                <TextBox x:Name="HotkeyTextBox" Text="Ctrl+Shift+Space" IsReadOnly="True" Background="#F0F0F0"/>
-                <TextBlock Text="(для изменения используйте Toggle или Push-to-Talk)" FontSize="10" Foreground="Gray" Margin="0,5,0,0"/>
-            </StackPanel>
-        </GroupBox>
-
-        <GroupBox Grid.Row="2" Header="Автовставка" Margin="0,0,0,10">
-            <StackPanel Margin="10">
-                <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="Задержка перед вставкой:" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                    <TextBox x:Name="AutoInsertDelayTextBox" Width="50" Text="2" VerticalAlignment="Center"/>
-                    <TextBlock Text="сек" VerticalAlignment="Center" Margin="5,0,0,0"/>
+            <GroupBox Grid.Row="0" Header="Режим записи" Margin="0,0,0,10">
+                <StackPanel Margin="10">
+                    <RadioButton x:Name="ToggleModeRadio" Content="Toggle (клик - начало, клик - конец)" GroupName="Mode" IsChecked="True" Margin="0,5"/>
+                    <RadioButton x:Name="PushToTalkRadio" Content="Push-to-Talk (зажатие кнопки мыши)" GroupName="Mode" Margin="0,5"/>
+                    <RadioButton x:Name="HotkeyRadio" Content="Горячая клавиша" GroupName="Mode" Margin="0,5"/>
                 </StackPanel>
-            </StackPanel>
-        </GroupBox>
+            </GroupBox>
 
-        <GroupBox Grid.Row="3" Header="Устройство записи" Margin="0,0,0,10">
-            <StackPanel Margin="10">
-                <ComboBox x:Name="AudioDeviceComboBox"/>
-            </StackPanel>
-        </GroupBox>
+            <GroupBox Grid.Row="1" Header="Горячая клавиша" Margin="0,0,0,10">
+                <StackPanel Margin="10">
+                    <TextBox x:Name="HotkeyTextBox" Text="Ctrl+Shift+Space" IsReadOnly="True" Background="#F0F0F0"/>
+                    <TextBlock Text="(для изменения используйте Toggle или Push-to-Talk)" FontSize="10" Foreground="Gray" Margin="0,5,0,0"/>
+                </StackPanel>
+            </GroupBox>
 
-        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button Content="Сохранить" Width="100" Margin="5" Click="SaveButton_Click"/>
-            <Button Content="Отмена" Width="100" Margin="5" Click="CancelButton_Click"/>
-        </StackPanel>
-    </Grid>
+            <GroupBox Grid.Row="2" Header="Автовставка" Margin="0,0,0,10">
+                <StackPanel Margin="10">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Задержка перед вставкой:" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <TextBox x:Name="AutoInsertDelayTextBox" Width="50" Text="2" VerticalAlignment="Center"/>
+                        <TextBlock Text="сек" VerticalAlignment="Center" Margin="5,0,0,0"/>
+                    </StackPanel>
+                </StackPanel>
+            </GroupBox>
+
+            <GroupBox Grid.Row="3" Header="Устройство записи" Margin="0,0,0,10">
+                <StackPanel Margin="10">
+                    <ComboBox x:Name="AudioDeviceComboBox"/>
+                </StackPanel>
+            </GroupBox>
+
+            <GroupBox Grid.Row="4" Header="Модель Whisper" Margin="0,0,0,10">
+                <StackPanel Margin="10">
+                    <ComboBox x:Name="WhisperModelComboBox" Margin="0,0,0,10">
+                        <ComboBoxItem Content="tiny (~75 MB, быстрая, менее точная)" Tag="tiny"/>
+                        <ComboBoxItem Content="base (~150 MB, средняя скорость)" Tag="base"/>
+                        <ComboBoxItem Content="small (~500 MB, оптимальная)" Tag="small" IsSelected="True"/>
+                        <ComboBoxItem Content="medium (~1.5 GB, точная, медленная)" Tag="medium"/>
+                    </ComboBox>
+                    
+                    <TextBlock x:Name="ModelStatusText" Text="Модель не установлена" Foreground="Orange" Margin="0,0,0,10"/>
+                    
+                    <Button x:Name="DownloadModelButton" Content="Скачать и применить модель" 
+                            Width="200" HorizontalAlignment="Left" Click="DownloadModelButton_Click"/>
+                    
+                    <ProgressBar x:Name="DownloadProgressBar" Height="20" Margin="0,10,0,0" 
+                                 Visibility="Collapsed" Minimum="0" Maximum="100"/>
+                    
+                    <TextBlock x:Name="DownloadStatusText" Text="" Margin="0,5,0,0" FontSize="11" Foreground="Gray"/>
+                </StackPanel>
+            </GroupBox>
+
+            <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+                <Button Content="Сохранить" Width="100" Margin="5" Click="SaveButton_Click"/>
+                <Button Content="Отмена" Width="100" Margin="5" Click="CancelButton_Click"/>
+            </StackPanel>
+        </Grid>
+    </ScrollViewer>
 </Window>
 

@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -13,13 +14,18 @@ namespace LWhisper.UI.WPF.Views
         private bool _isDragging;
         private Point _clickPosition;
         private WidgetState _currentState = WidgetState.Idle;
+        private bool _isShowTextButtonClick = false;
 
         public event Action? RecordingStarted;
         public event Action? RecordingStopped;
+        public event Action<double, double>? PositionChanged;
+        public event Action? ShowTextRequested;
+        public event Action? BeforeRecordingStarted;
 
         public FloatingMicrophoneWidget()
         {
             InitializeComponent();
+            LocationChanged += (s, e) => PositionChanged?.Invoke(Left, Top);
         }
 
         /// <summary>
@@ -52,7 +58,14 @@ namespace LWhisper.UI.WPF.Views
             brush.GradientStops.Add(new GradientStop(Color.FromRgb(74, 144, 226), 0));
             brush.GradientStops.Add(new GradientStop(Color.FromRgb(53, 122, 189), 1));
             MicrophoneButton.Fill = brush;
+            
+            // Остановить все анимации
             MicrophoneButton.BeginAnimation(OpacityProperty, null);
+            if (MicrophoneIcon.RenderTransform is RotateTransform rotateTransform)
+            {
+                rotateTransform.BeginAnimation(RotateTransform.AngleProperty, null);
+            }
+            MicrophoneIcon.RenderTransform = null;
         }
 
         private void SetRecordingState()
@@ -61,6 +74,13 @@ namespace LWhisper.UI.WPF.Views
             brush.GradientStops.Add(new GradientStop(Color.FromRgb(231, 76, 60), 0));
             brush.GradientStops.Add(new GradientStop(Color.FromRgb(192, 57, 43), 1));
             MicrophoneButton.Fill = brush;
+
+            // Остановить анимацию вращения, если была
+            if (MicrophoneIcon.RenderTransform is RotateTransform rt)
+            {
+                rt.BeginAnimation(RotateTransform.AngleProperty, null);
+            }
+            MicrophoneIcon.RenderTransform = null;
 
             var animation = new DoubleAnimation(1.0, 0.6, TimeSpan.FromMilliseconds(800))
             {
@@ -94,6 +114,12 @@ namespace LWhisper.UI.WPF.Views
             {
                 _clickPosition = e.GetPosition(this);
                 _isDragging = false;
+                
+                // Вызвать событие ДО того как виджет получит фокус
+                if (_currentState == WidgetState.Idle)
+                {
+                    BeforeRecordingStarted?.Invoke();
+                }
             }
         }
 
@@ -119,6 +145,13 @@ namespace LWhisper.UI.WPF.Views
 
         private void Window_MouseUp(object sender, MouseButtonEventArgs e)
         {
+            if (_isShowTextButtonClick)
+            {
+                _isShowTextButtonClick = false;
+                _isDragging = false;
+                return;
+            }
+            
             if (e.ChangedButton == MouseButton.Left && !_isDragging)
             {
                 HandleClick();
@@ -136,6 +169,31 @@ namespace LWhisper.UI.WPF.Views
             {
                 RecordingStopped?.Invoke();
             }
+        }
+
+        private void ShowTextButton_MouseEnter(object sender, MouseEventArgs e)
+        {
+            var border = sender as Border;
+            if (border != null)
+            {
+                border.Background = new SolidColorBrush(Color.FromArgb(150, 0, 0, 0));
+            }
+        }
+
+        private void ShowTextButton_MouseLeave(object sender, MouseEventArgs e)
+        {
+            var border = sender as Border;
+            if (border != null)
+            {
+                border.Background = new SolidColorBrush(Color.FromArgb(136, 0, 0, 0));
+            }
+        }
+
+        private void ShowTextButton_Click(object sender, MouseButtonEventArgs e)
+        {
+            _isShowTextButtonClick = true;
+            ShowTextRequested?.Invoke();
+            e.Handled = true;
         }
     }
 
