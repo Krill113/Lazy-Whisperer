@@ -89,7 +89,6 @@ namespace LWhisper.UI.WPF
                     Top = _settings.WidgetPositionY >= 0 ? _settings.WidgetPositionY : defaultY
                 };
 
-                _widget.BeforeRecordingStarted += OnBeforeRecordingStarted;
                 _widget.RecordingStarted += OnRecordingStarted;
                 _widget.RecordingStopped += OnRecordingStopped;
                 _widget.PositionChanged += OnWidgetPositionChanged;
@@ -260,11 +259,6 @@ namespace LWhisper.UI.WPF
             {
                 winInjector.RememberActiveWindow();
             }
-        }
-
-        private void OnBeforeRecordingStarted()
-        {
-            // Этот метод больше не используется, но оставлю для совместимости
         }
 
         private void OnRecordingStarted()
