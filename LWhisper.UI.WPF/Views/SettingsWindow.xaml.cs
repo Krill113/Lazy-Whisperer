@@ -22,6 +22,7 @@ namespace LWhisper.UI.WPF.Views
                 RecordingMode = currentSettings.RecordingMode,
                 HotkeyBinding = currentSettings.HotkeyBinding,
                 AutoInsertDelaySeconds = currentSettings.AutoInsertDelaySeconds,
+                AutoInsertEnabled = currentSettings.AutoInsertEnabled,
                 SelectedAudioDevice = currentSettings.SelectedAudioDevice,
                 WhisperModelSize = currentSettings.WhisperModelSize
             };
@@ -48,6 +49,7 @@ namespace LWhisper.UI.WPF.Views
 
             HotkeyTextBox.Text = Settings.HotkeyBinding ?? "Ctrl+Shift+Space";
             AutoInsertDelayTextBox.Text = Settings.AutoInsertDelaySeconds.ToString();
+            AutoInsertEnabledCheckBox.IsChecked = Settings.AutoInsertEnabled;
 
             // Выбрать модель
             foreach (System.Windows.Controls.ComboBoxItem item in WhisperModelComboBox.Items)
@@ -188,6 +190,8 @@ namespace LWhisper.UI.WPF.Views
             {
                 Settings.AutoInsertDelaySeconds = Math.Max(0, delay);
             }
+
+            Settings.AutoInsertEnabled = AutoInsertEnabledCheckBox.IsChecked == true;
 
             Settings.SelectedAudioDevice = AudioDeviceComboBox.SelectedItem as string;
 

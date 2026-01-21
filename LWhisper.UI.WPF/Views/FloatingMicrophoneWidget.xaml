@@ -35,6 +35,28 @@
                   Fill="White" Stretch="Uniform"/>
         </Viewbox>
         
+        <!-- Кнопка минимизации в трей -->
+        <Border x:Name="MinimizeButton"
+                Width="18" Height="18"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                Margin="0,5,8,0"
+                Background="#88000000"
+                CornerRadius="9"
+                Cursor="Hand"
+                Opacity="0.7"
+                MouseEnter="MinimizeButton_MouseEnter"
+                MouseLeave="MinimizeButton_MouseLeave"
+                MouseLeftButtonDown="MinimizeButton_Click">
+            <TextBlock Text="✕" 
+                       FontSize="12"
+                       FontWeight="Bold"
+                       Foreground="White"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       Margin="0,-1,0,0"/>
+        </Border>
+        
         <!-- Кнопка показа/скрытия текста -->
         <Border x:Name="ShowTextButton"
                 Width="60" Height="20"

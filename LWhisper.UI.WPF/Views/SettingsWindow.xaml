@@ -34,11 +34,15 @@
 
             <GroupBox Grid.Row="2" Header="Автовставка" Margin="0,0,0,10">
                 <StackPanel Margin="10">
+                    <CheckBox x:Name="AutoInsertEnabledCheckBox" Content="Автоматически вставлять распознанный текст" 
+                              IsChecked="True" Margin="0,0,0,10"/>
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="Задержка перед вставкой:" VerticalAlignment="Center" Margin="0,0,10,0"/>
                         <TextBox x:Name="AutoInsertDelayTextBox" Width="50" Text="2" VerticalAlignment="Center"/>
                         <TextBlock Text="сек" VerticalAlignment="Center" Margin="5,0,0,0"/>
                     </StackPanel>
+                    <TextBlock Text="(можно изменить для каждого случая в окне предпросмотра)" 
+                               FontSize="10" Foreground="Gray" Margin="0,5,0,0"/>
                 </StackPanel>
             </GroupBox>
 

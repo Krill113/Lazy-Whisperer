@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
+using System.Windows.Media.Animation;
 
 namespace LWhisper.UI.WPF.Views
 {
@@ -12,24 +13,43 @@ namespace LWhisper.UI.WPF.Views
         private DispatcherTimer? _autoInsertTimer;
         private int _secondsRemaining;
         private bool _userEdited;
+        private bool _autoInsertEnabled = true;
 
         public event Action<string>? InsertRequested;
+        public event Action<bool>? AutoInsertSettingChanged;
 
         public PreviewWindow()
         {
             InitializeComponent();
+            Opacity = 0; // Начальная прозрачность для анимации
+        }
+
+        private void Window_Loaded(object sender, RoutedEventArgs e)
+        {
+            // Запустить анимацию появления
+            var storyboard = (Storyboard)FindResource("FadeInAnimation");
+            storyboard.Begin(this);
         }
 
         /// <summary>
         /// Показать текст с авто-вставкой через заданное время
         /// </summary>
-        public void ShowWithText(string text, int autoInsertDelaySeconds)
+        /// <param name="text">Текст для отображения</param>
+        /// <param name="autoInsertDelaySeconds">Задержка перед автовставкой</param>
+        /// <param name="autoInsertEnabled">Состояние чекбокса автовставки</param>
+        /// <param name="startTimer">Запустить ли таймер сразу</param>
+        public void ShowWithText(string text, int autoInsertDelaySeconds, bool autoInsertEnabled = true, bool startTimer = true)
         {
             TextBox.Text = text;
             _userEdited = false;
             _secondsRemaining = autoInsertDelaySeconds;
+            _autoInsertEnabled = autoInsertEnabled;
+            
+            // Установить состояние чекбокса согласно настройкам
+            AutoInsertCheckBox.IsChecked = autoInsertEnabled;
 
-            if (autoInsertDelaySeconds > 0)
+            // Запустить таймер только если требуется И автовставка включена
+            if (startTimer && autoInsertEnabled && autoInsertDelaySeconds > 0)
             {
                 StartAutoInsertTimer();
             }
@@ -41,13 +61,20 @@ namespace LWhisper.UI.WPF.Views
         /// <summary>
         /// Обновить текст в уже открытом окне
         /// </summary>
-        public void UpdateText(string text)
+        /// <param name="text">Новый текст</param>
+        /// <param name="startTimer">Запустить ли таймер после обновления</param>
+        public void UpdateText(string text, bool startTimer = false)
         {
             TextBox.Text = text;
             _userEdited = false;
-            _secondsRemaining = 2; // Сбросить таймер
-            StopAutoInsertTimer();
-            StartAutoInsertTimer();
+            
+            // Запустить таймер только если требуется И автовставка включена
+            if (startTimer && _autoInsertEnabled && _secondsRemaining > 0)
+            {
+                // Перезапустить таймер при необходимости
+                StopAutoInsertTimer();
+                StartAutoInsertTimer();
+            }
         }
 
         private void StartAutoInsertTimer()
@@ -65,7 +92,12 @@ namespace LWhisper.UI.WPF.Views
         {
             _autoInsertTimer?.Stop();
             _autoInsertTimer = null;
-            TimerText.Text = string.Empty;
+            
+            // Проверка на null для безопасности при инициализации
+            if (TimerText != null)
+            {
+                TimerText.Text = string.Empty;
+            }
         }
 
         private void AutoInsertTimer_Tick(object? sender, EventArgs e)
@@ -120,6 +152,31 @@ namespace LWhisper.UI.WPF.Views
         private void InsertButton_Click(object sender, RoutedEventArgs e)
         {
             PerformInsert();
+        }
+
+        private void AutoInsertCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            // Игнорировать события до полной загрузки окна
+            if (!IsLoaded) return;
+            
+            _autoInsertEnabled = AutoInsertCheckBox.IsChecked == true;
+            
+            if (_autoInsertEnabled && !string.IsNullOrEmpty(TextBox?.Text) && _secondsRemaining > 0)
+            {
+                // Включена - запустить таймер
+                if (_autoInsertTimer == null)
+                {
+                    StartAutoInsertTimer();
+                }
+            }
+            else
+            {
+                // Выключена - остановить таймер
+                StopAutoInsertTimer();
+            }
+            
+            // Уведомить об изменении настройки
+            AutoInsertSettingChanged?.Invoke(_autoInsertEnabled);
         }
 
         private void PerformInsert()

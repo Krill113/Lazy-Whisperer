@@ -94,6 +94,7 @@ namespace LWhisper.UI.WPF
                 _widget.PositionChanged += OnWidgetPositionChanged;
                 _widget.ShowTextRequested += OnShowTextRequested;
                 _widget.RememberTargetWindow += OnRememberTargetWindow;
+                _widget.MinimizeRequested += OnMinimizeRequested;
                 _widget.Show();
 
                 var hwnd = new WindowInteropHelper(_widget).Handle;
@@ -167,6 +168,12 @@ namespace LWhisper.UI.WPF
             _widget?.Show();
             _widget?.Activate();
             Log.Debug("Показан виджет микрофона");
+        }
+
+        private void OnMinimizeRequested()
+        {
+            _widget?.Hide();
+            Log.Debug("Виджет свернут в трей по запросу пользователя");
         }
 
         private void OnSettingsRequested()
@@ -300,6 +307,9 @@ namespace LWhisper.UI.WPF
 
             try
             {
+                // Показать окно СРАЗУ с текстом "Распознавание..."
+                ShowPreviewWindow("Распознавание...", startTimer: false);
+                
                 var audioData = await _audioRecorder!.StopRecordingAsync();
                 Log.Debug("Запись остановлена, длительность: {Duration}", audioData.Duration);
 
@@ -313,11 +323,23 @@ namespace LWhisper.UI.WPF
                 if (result.Success && !string.IsNullOrEmpty(result.Text))
                 {
                     _lastRecognizedText = result.Text; // Сохранить последний текст
-                    ShowPreviewWindow(result.Text);
+                    
+                    // Обновить текст в уже открытом окне и ТЕПЕРЬ запустить таймер
+                    if (_previewWindow != null && _previewWindow.IsVisible)
+                    {
+                        _previewWindow.UpdateText(result.Text, startTimer: _settings.AutoInsertEnabled);
+                        Log.Debug("Текст обновлен в PreviewWindow, таймер запущен: {TimerStarted}", _settings.AutoInsertEnabled);
+                    }
                 }
                 else
                 {
                     Log.Warning("Распознавание не дало результата");
+                    
+                    // Закрыть окно если распознавание не удалось
+                    if (_previewWindow != null && _previewWindow.IsVisible)
+                    {
+                        _previewWindow.Close();
+                    }
                 }
             }
             catch (Exception ex)
@@ -325,6 +347,13 @@ namespace LWhisper.UI.WPF
                 Log.Error(ex, "Ошибка при распознавании");
                 _widget?.SetState(WidgetState.Idle);
                 _trayManager?.SetIcon(TrayIconState.Idle);
+                
+                // Закрыть окно предпросмотра при ошибке
+                if (_previewWindow != null && _previewWindow.IsVisible)
+                {
+                    _previewWindow.Close();
+                }
+                
                 Application.Current.Dispatcher.Invoke(() =>
                 {
                     MessageBox.Show($"Ошибка распознавания: {ex.Message}", "LWhisper", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -332,7 +361,7 @@ namespace LWhisper.UI.WPF
             }
         }
 
-        private void ShowPreviewWindow(string text)
+        private void ShowPreviewWindow(string text, bool startTimer = true)
         {
             try
             {
@@ -365,6 +394,14 @@ namespace LWhisper.UI.WPF
                     }
                 };
 
+                // Подписка на изменение настройки автовставки из PreviewWindow
+                _previewWindow.AutoInsertSettingChanged += (enabled) =>
+                {
+                    _settings.AutoInsertEnabled = enabled;
+                    _settingsManager?.Save(_settings);
+                    Log.Debug("Настройка автовставки изменена на: {Enabled}", enabled);
+                };
+
                 _previewWindow.Closed += (s, e) =>
                 {
                     Log.Debug("PreviewWindow закрыто");
@@ -377,8 +414,9 @@ namespace LWhisper.UI.WPF
                     PositionPreviewWindow();
                 }
 
-                Log.Debug("Показ PreviewWindow");
-                _previewWindow.ShowWithText(text, _settings.AutoInsertDelaySeconds);
+                Log.Debug("Показ PreviewWindow (startTimer={StartTimer})", startTimer);
+                // Параметр autoInsertEnabled всегда из настроек, startTimer управляет только запуском таймера
+                _previewWindow.ShowWithText(text, _settings.AutoInsertDelaySeconds, _settings.AutoInsertEnabled, startTimer);
             }
             catch (Exception ex)
             {
@@ -445,24 +483,26 @@ namespace LWhisper.UI.WPF
         /// </summary>
         private void OnShowTextRequested()
         {
+            // Если окно уже показано, скрыть его
+            if (_previewWindow != null && _previewWindow.IsVisible)
+            {
+                _previewWindow.Close();
+                Log.Debug("PreviewWindow скрыто по запросу");
+                return;
+            }
+            
+            // Если нет распознанного текста, показать сообщение
             if (string.IsNullOrEmpty(_lastRecognizedText))
             {
                 Log.Debug("Нет распознанного текста для показа");
+                MessageBox.Show("Нет распознанного текста для отображения.\nСначала запишите голосовое сообщение.", 
+                    "LWhisper", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
-            if (_previewWindow != null && _previewWindow.IsVisible)
-            {
-                // Скрыть окно
-                _previewWindow.Close();
-                Log.Debug("PreviewWindow скрыто по запросу");
-            }
-            else
-            {
-                // Показать окно с последним текстом
-                ShowPreviewWindow(_lastRecognizedText);
-                Log.Debug("PreviewWindow показано по запросу");
-            }
+            // Показать окно с последним текстом БЕЗ автовставки
+            ShowPreviewWindow(_lastRecognizedText, startTimer: false);
+            Log.Debug("PreviewWindow показано по запросу (без автовставки)");
         }
 
         protected override void OnExit(ExitEventArgs e)

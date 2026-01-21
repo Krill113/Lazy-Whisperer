@@ -21,6 +21,11 @@ namespace LWhisper.Core.Models
         public int AutoInsertDelaySeconds { get; set; } = 2;
 
         /// <summary>
+        /// Включить автоматическую вставку текста
+        /// </summary>
+        public bool AutoInsertEnabled { get; set; } = true;
+
+        /// <summary>
         /// ID выбранного устройства записи
         /// </summary>
         public string? SelectedAudioDevice { get; set; }
