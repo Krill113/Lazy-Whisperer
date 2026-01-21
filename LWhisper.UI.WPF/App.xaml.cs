@@ -160,6 +160,24 @@ namespace LWhisper.UI.WPF
             {
                 Log.Warning("Модель Whisper не найдена: {Path}. Используется Mock.", modelPath);
                 _speechRecognizer = new MockSpeechRecognizer();
+                
+                // При первом запуске показать окно настроек с инструкцией
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    var result = MessageBox.Show(
+                        $"Модель Whisper не найдена.\n\n" +
+                        $"Для работы распознавания речи необходимо скачать модель.\n" +
+                        $"Текущая модель: {_settings.WhisperModelSize}\n\n" +
+                        $"Открыть окно настроек для скачивания?",
+                        "LWhisper - Требуется настройка",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Information);
+                    
+                    if (result == MessageBoxResult.Yes)
+                    {
+                        OnSettingsRequested();
+                    }
+                }), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
             }
         }
 
