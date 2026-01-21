@@ -509,12 +509,11 @@ namespace LWhisper.UI.WPF
                 return;
             }
             
-            // Если нет распознанного текста, показать сообщение
+            // Если нет распознанного текста, показать окно с информационным сообщением
             if (string.IsNullOrEmpty(_lastRecognizedText))
             {
-                Log.Debug("Нет распознанного текста для показа");
-                MessageBox.Show("Нет распознанного текста для отображения.\nСначала запишите голосовое сообщение.", 
-                    "LWhisper", MessageBoxButton.OK, MessageBoxImage.Information);
+                Log.Debug("Нет распознанного текста для показа, показываем информационное сообщение");
+                ShowPreviewWindow("Текста еще нет.\n\nЗапишите голосовое сообщение, нажав на микрофон.", startTimer: false);
                 return;
             }
 
