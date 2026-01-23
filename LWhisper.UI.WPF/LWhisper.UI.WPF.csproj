@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -28,17 +28,5 @@
     <PackageReference Include="System.Drawing.Common" Version="10.0.2" />
     <PackageReference Include="System.Text.Json" Version="10.0.2" />
   </ItemGroup>
-
-  <!-- Автоматическая публикация для Release сборки -->
-  <Target Name="AutoPublishRelease" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
-    <Message Text="========================================" Importance="high" />
-    <Message Text="Запуск автоматической публикации Release..." Importance="high" />
-    <Message Text="========================================" Importance="high" />
-    <Exec Command="dotnet publish &quot;$(ProjectPath)&quot; --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true --output &quot;$(SolutionDir)publish\Release\win-x64&quot;" />
-    <Message Text="========================================" Importance="high" />
-    <Message Text="✓ Публикация завершена!" Importance="high" />
-    <Message Text="Файл: $(SolutionDir)publish\Release\win-x64\LWhisper.UI.WPF.exe" Importance="high" />
-    <Message Text="========================================" Importance="high" />
-  </Target>
 
 </Project>
