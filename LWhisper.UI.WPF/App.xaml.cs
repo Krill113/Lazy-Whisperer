@@ -25,6 +25,11 @@ namespace LWhisper.UI.WPF
         private AppSettings _settings;
         private bool _isRecording;
         private string _lastRecognizedText = string.Empty; // Для кнопки показа текста
+        
+        // Компоненты потокового режима
+        private IVoiceActivityDetector? _vad;
+        private SegmentRecognitionManager? _recognitionManager;
+        private bool _useStreamingMode = false;
 
         public App()
         {
@@ -64,13 +69,16 @@ namespace LWhisper.UI.WPF
                 InitializeSpeechRecognizer();
 
                 _textInjector = new WindowsTextInjector();
-                _audioRecorder = new NAudioRecorder();
+                
+                // Инициализация аудио рекордера (потоковый или обычный режим)
+                InitializeAudioRecorder();
+                
                 _hotkeyManager = new WindowsHotkeyManager();
 
                 // Применить настройки аудио устройства
                 if (!string.IsNullOrEmpty(_settings.SelectedAudioDevice))
                 {
-                    _audioRecorder.SetDevice(_settings.SelectedAudioDevice);
+                    _audioRecorder?.SetDevice(_settings.SelectedAudioDevice);
                 }
 
                 _trayManager = new TrayIconManager();
@@ -181,6 +189,123 @@ namespace LWhisper.UI.WPF
             }
         }
 
+        /// <summary>
+        /// Инициализировать аудио рекордер (потоковый или обычный режим)
+        /// </summary>
+        private void InitializeAudioRecorder()
+        {
+            // Проверить, включен ли потоковый режим в настройках
+            _useStreamingMode = _settings.Streaming?.Enabled ?? false;
+            
+            if (_useStreamingMode && _speechRecognizer != null)
+            {
+                try
+                {
+                    // Убедиться, что настройки потокового режима не null
+                    if (_settings.Streaming == null)
+                    {
+                        _settings.Streaming = new StreamingSettings();
+                    }
+                    
+                    // Выбрать агрессивность VAD в зависимости от типа распознавателя
+                    // Mock распознаватель требует более агрессивную фильтрацию (3),
+                    // чтобы не создавать сегменты из фонового шума
+                    int vadAggressiveness = _speechRecognizer is MockSpeechRecognizer ? 3 : 2;
+                    
+                    // Создать VAD
+                    _vad = new WebRtcVoiceActivityDetector(aggressiveness: vadAggressiveness);
+                    
+                    Log.Information("Используется распознаватель: {Recognizer}, агрессивность VAD: {Aggressiveness}",
+                        _speechRecognizer.GetType().Name, vadAggressiveness);
+                    
+                    // Создать потоковый рекордер с VAD
+                    var streamingRecorder = new StreamingAudioRecorder(_vad, _settings.Streaming);
+                    
+                    // Создать менеджер распознавания сегментов
+                    _recognitionManager = new SegmentRecognitionManager(
+                        _speechRecognizer, 
+                        _settings.Streaming.MaxParallelRecognitions
+                    );
+                    
+                    // Подписаться на события промежуточных сегментов
+                    streamingRecorder.SegmentReady += async (audioData) =>
+                    {
+                        Log.Debug("Получен промежуточный сегмент для распознавания");
+                        await _recognitionManager.ProcessSegmentAsync(audioData);
+                    };
+                    
+                    // Подписаться на события финальных сегментов
+                    streamingRecorder.FinalSegmentReady += async (audioData) =>
+                    {
+                        Log.Debug("Получен финальный сегмент для распознавания");
+                        await _recognitionManager.ProcessSegmentAsync(audioData);
+                    };
+                    
+                    // Подписаться на обновления распознанных сегментов для UI
+                    _recognitionManager.SegmentRecognized += (segmentId, text) =>
+                    {
+                        Application.Current.Dispatcher.Invoke(() =>
+                        {
+                            UpdatePreviewWindowWithSegment(text);
+                        });
+                    };
+                    
+                    // Подписаться на обновления полного текста
+                    _recognitionManager.FullTextUpdated += (fullText) =>
+                    {
+                        Application.Current.Dispatcher.Invoke(() =>
+                        {
+                            _lastRecognizedText = fullText;
+                            if (_previewWindow != null && _previewWindow.IsVisible)
+                            {
+                                _previewWindow.UpdateText(fullText, startTimer: false);
+                            }
+                        });
+                    };
+                    
+                    // Подписаться на событие автостопа
+                    streamingRecorder.RecordingAutoStopped += () =>
+                    {
+                        Application.Current.Dispatcher.Invoke(() =>
+                        {
+                            Log.Debug("Получено уведомление об автостопе, вызываем OnRecordingStopped");
+                            OnRecordingStopped();
+                        });
+                    };
+                    
+                    _audioRecorder = streamingRecorder;
+                    
+                    Log.Information("Инициализирован потоковый режим с VAD (агрессивность={Aggressiveness}, пауза={Pause}мс, автостоп={AutoStop})",
+                        vadAggressiveness, _settings.Streaming.PauseThresholdMs, _settings.Streaming.AutoStopOnLongPause);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Ошибка инициализации потокового режима, используется обычный NAudioRecorder");
+                    _audioRecorder = new NAudioRecorder();
+                    _useStreamingMode = false;
+                }
+            }
+            else
+            {
+                // Обычный режим - весь аудио фрагмент записывается и затем распознается
+                _audioRecorder = new NAudioRecorder();
+                Log.Information("Инициализирован обычный режим записи (потоковый режим отключен)");
+            }
+        }
+        
+        /// <summary>
+        /// Обновить окно предпросмотра с новым сегментом текста
+        /// </summary>
+        private void UpdatePreviewWindowWithSegment(string segmentText)
+        {
+            if (_previewWindow == null || !_previewWindow.IsVisible)
+            {
+                // Если окно не открыто, открыть его с первым сегментом
+                ShowPreviewWindow(segmentText, startTimer: false);
+            }
+            // Полный текст обновляется через событие FullTextUpdated
+        }
+
         private void OnShowMicrophoneRequested()
         {
             _widget?.Show();
@@ -231,6 +356,10 @@ namespace LWhisper.UI.WPF
                 disposable.Dispose();
             }
             InitializeSpeechRecognizer();
+            
+            // Переинициализировать аудио рекордер (может измениться режим потоковой обработки)
+            CleanupAudioRecorder();
+            InitializeAudioRecorder();
 
             // Применить настройки аудио устройства
             if (!string.IsNullOrEmpty(_settings.SelectedAudioDevice))
@@ -238,7 +367,38 @@ namespace LWhisper.UI.WPF
                 _audioRecorder?.SetDevice(_settings.SelectedAudioDevice);
             }
 
-            Log.Information("Настройки применены: режим {Mode}, модель {Model}", _settings.RecordingMode, _settings.WhisperModelSize);
+            Log.Information("Настройки применены: режим {Mode}, модель {Model}, потоковый режим {Streaming}", 
+                _settings.RecordingMode, _settings.WhisperModelSize, _useStreamingMode);
+        }
+        
+        /// <summary>
+        /// Очистить ресурсы аудио рекордера
+        /// </summary>
+        private void CleanupAudioRecorder()
+        {
+            try
+            {
+                if (_audioRecorder is IDisposable disposableRecorder)
+                {
+                    disposableRecorder.Dispose();
+                }
+                _audioRecorder = null;
+                
+                _recognitionManager?.Dispose();
+                _recognitionManager = null;
+                
+                if (_vad is IDisposable disposableVad)
+                {
+                    disposableVad.Dispose();
+                }
+                _vad = null;
+                
+                Log.Debug("Ресурсы аудио рекордера освобождены");
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Ошибка при очистке ресурсов аудио рекордера");
+            }
         }
 
         private void OnExitRequested()
@@ -302,8 +462,19 @@ namespace LWhisper.UI.WPF
                 _isRecording = true;
                 _widget?.SetState(WidgetState.Recording);
                 _trayManager?.SetIcon(TrayIconState.Recording);
+                
+                // В потоковом режиме сбросить состояние менеджера распознавания
+                if (_useStreamingMode)
+                {
+                    _recognitionManager?.Reset();
+                    _lastRecognizedText = string.Empty;
+                    
+                    // Показать окно предпросмотра СРАЗУ с информацией о записи
+                    ShowPreviewWindow("🎤 Запись... Говорите!", startTimer: false);
+                }
+                
                 _audioRecorder?.StartRecording();
-                Log.Debug("Запись начата");
+                Log.Debug("Запись начата (потоковый режим: {Streaming})", _useStreamingMode);
             }
             catch (Exception ex)
             {
@@ -325,40 +496,86 @@ namespace LWhisper.UI.WPF
 
             try
             {
-                // Показать окно СРАЗУ с текстом "Распознавание..."
-                ShowPreviewWindow("Распознавание...", startTimer: false);
-                
-                var audioData = await _audioRecorder!.StopRecordingAsync();
-                Log.Debug("Запись остановлена, длительность: {Duration}", audioData.Duration);
-
-                var result = await _speechRecognizer!.RecognizeAsync(audioData);
-                Log.Information("Распознавание завершено: {Success}, Текст: {Text}", result.Success, result.Text);
-
-                // Сбросить состояние в Idle СРАЗУ после распознавания (микрофон перестает крутиться)
-                _widget?.SetState(WidgetState.Idle);
-                _trayManager?.SetIcon(TrayIconState.Idle);
-
-                if (result.Success && !string.IsNullOrEmpty(result.Text))
+                if (_useStreamingMode)
                 {
-                    _lastRecognizedText = result.Text; // Сохранить последний текст
+                    // ПОТОКОВЫЙ РЕЖИМ
+                    Log.Debug("Остановка потоковой записи");
                     
-                    // Обновить текст в уже открытом окне и ТЕПЕРЬ запустить таймер
-                    if (_previewWindow != null && _previewWindow.IsVisible)
+                    // Остановить запись (последний сегмент будет отправлен через FinalSegmentReady)
+                    var audioData = await _audioRecorder!.StopRecordingAsync();
+                    
+                    // Дождаться завершения всех задач распознавания
+                    if (_recognitionManager != null)
                     {
-                        _previewWindow.UpdateText(result.Text, startTimer: _settings.AutoInsertEnabled);
-                        Log.Debug("Текст обновлен в PreviewWindow, таймер запущен: {TimerStarted}", _settings.AutoInsertEnabled);
+                        await _recognitionManager.WaitAllAsync();
+                        
+                        // Получить полный собранный текст
+                        var fullText = _recognitionManager.GetFullText();
+                        
+                        if (!string.IsNullOrWhiteSpace(fullText))
+                        {
+                            _lastRecognizedText = fullText;
+                            
+                            Log.Information("Потоковое распознавание завершено. Итоговый текст ({Length} символов): {Preview}...",
+                                fullText.Length, 
+                                fullText.Length > 100 ? fullText.Substring(0, 100) : fullText);
+                            
+                            // Обновить окно предпросмотра с финальным текстом и ТЕПЕРЬ запустить таймер
+                            if (_previewWindow != null && _previewWindow.IsVisible)
+                            {
+                                _previewWindow.UpdateText(fullText, startTimer: _settings.AutoInsertEnabled);
+                            }
+                        }
+                        else
+                        {
+                            Log.Warning("Потоковое распознавание не дало результата");
+                            
+                            // Закрыть окно если распознавание не удалось
+                            if (_previewWindow != null && _previewWindow.IsVisible)
+                            {
+                                _previewWindow.Close();
+                            }
+                        }
                     }
                 }
                 else
                 {
-                    Log.Warning("Распознавание не дало результата");
+                    // ОБЫЧНЫЙ РЕЖИМ
+                    // Показать окно СРАЗУ с текстом "Распознавание..."
+                    ShowPreviewWindow("Распознавание...", startTimer: false);
                     
-                    // Закрыть окно если распознавание не удалось
-                    if (_previewWindow != null && _previewWindow.IsVisible)
+                    var audioData = await _audioRecorder!.StopRecordingAsync();
+                    Log.Debug("Запись остановлена, длительность: {Duration}", audioData.Duration);
+
+                    var result = await _speechRecognizer!.RecognizeAsync(audioData);
+                    Log.Information("Распознавание завершено: {Success}, Текст: {Text}", result.Success, result.Text);
+
+                    if (result.Success && !string.IsNullOrEmpty(result.Text))
                     {
-                        _previewWindow.Close();
+                        _lastRecognizedText = result.Text; // Сохранить последний текст
+                        
+                        // Обновить текст в уже открытом окне и ТЕПЕРЬ запустить таймер
+                        if (_previewWindow != null && _previewWindow.IsVisible)
+                        {
+                            _previewWindow.UpdateText(result.Text, startTimer: _settings.AutoInsertEnabled);
+                            Log.Debug("Текст обновлен в PreviewWindow, таймер запущен: {TimerStarted}", _settings.AutoInsertEnabled);
+                        }
+                    }
+                    else
+                    {
+                        Log.Warning("Распознавание не дало результата");
+                        
+                        // Закрыть окно если распознавание не удалось
+                        if (_previewWindow != null && _previewWindow.IsVisible)
+                        {
+                            _previewWindow.Close();
+                        }
                     }
                 }
+                
+                // Сбросить состояние в Idle ПОСЛЕ завершения всего распознавания
+                _widget?.SetState(WidgetState.Idle);
+                _trayManager?.SetIcon(TrayIconState.Idle);
             }
             catch (Exception ex)
             {
@@ -527,6 +744,10 @@ namespace LWhisper.UI.WPF
             SaveWidgetPosition();
             _hotkeyManager?.UnregisterHotkey();
             _trayManager?.Dispose();
+            
+            // Очистить ресурсы потокового режима
+            CleanupAudioRecorder();
+            
             Log.CloseAndFlush();
             base.OnExit(e);
         }

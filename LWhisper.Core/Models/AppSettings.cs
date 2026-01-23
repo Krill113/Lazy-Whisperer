@@ -49,6 +49,11 @@ namespace LWhisper.Core.Models
         /// Размер модели Whisper
         /// </summary>
         public string WhisperModelSize { get; set; } = "small";
+
+        /// <summary>
+        /// Настройки потокового распознавания
+        /// </summary>
+        public StreamingSettings Streaming { get; set; } = new StreamingSettings();
     }
 }
 

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using LWhisper.Core.Models;
@@ -33,6 +34,21 @@ namespace LWhisper.Core.Interfaces
         /// Установить устройство записи
         /// </summary>
         void SetDevice(string deviceName);
+
+        /// <summary>
+        /// Событие готовности промежуточного сегмента (для потокового режима)
+        /// </summary>
+        event Action<AudioData>? SegmentReady;
+
+        /// <summary>
+        /// Событие готовности финального сегмента (для потокового режима)
+        /// </summary>
+        event Action<AudioData>? FinalSegmentReady;
+
+        /// <summary>
+        /// Событие автоматической остановки записи (для потокового режима с AutoStop)
+        /// </summary>
+        event Action? RecordingAutoStopped;
     }
 }
 

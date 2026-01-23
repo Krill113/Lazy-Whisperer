@@ -19,6 +19,11 @@ namespace LWhisper.UI.WPF.Services
         private int _deviceNumber = 0; // Default device
 
         public bool IsRecording => _isRecording;
+        
+        // События для потокового режима (не используются в обычном NAudioRecorder)
+        public event Action<AudioData>? SegmentReady;
+        public event Action<AudioData>? FinalSegmentReady;
+        public event Action? RecordingAutoStopped;
 
         public void StartRecording()
         {

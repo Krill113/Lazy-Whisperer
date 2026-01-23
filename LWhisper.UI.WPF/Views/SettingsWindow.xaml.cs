@@ -24,7 +24,8 @@ namespace LWhisper.UI.WPF.Views
                 AutoInsertDelaySeconds = currentSettings.AutoInsertDelaySeconds,
                 AutoInsertEnabled = currentSettings.AutoInsertEnabled,
                 SelectedAudioDevice = currentSettings.SelectedAudioDevice,
-                WhisperModelSize = currentSettings.WhisperModelSize
+                WhisperModelSize = currentSettings.WhisperModelSize,
+                Streaming = currentSettings.Streaming ?? new StreamingSettings()
             };
 
             LoadSettings();
@@ -60,6 +61,12 @@ namespace LWhisper.UI.WPF.Views
                     break;
                 }
             }
+            
+            // Загрузить настройки потокового режима
+            StreamingEnabledCheckBox.IsChecked = Settings.Streaming?.Enabled ?? true;
+            PauseThresholdTextBox.Text = Settings.Streaming?.PauseThresholdMs.ToString() ?? "1000";
+            AutoStopCheckBox.IsChecked = Settings.Streaming?.AutoStopOnLongPause ?? false;
+            AutoStopPauseTextBox.Text = Settings.Streaming?.AutoStopPauseDurationMs.ToString() ?? "3000";
         }
 
         private void LoadAudioDevices(List<string> devices)
@@ -196,6 +203,26 @@ namespace LWhisper.UI.WPF.Views
             {
                 Settings.WhisperModelSize = selectedItem.Tag.ToString()!;
             }
+            
+            // Сохранить настройки потокового режима
+            if (Settings.Streaming == null)
+            {
+                Settings.Streaming = new LWhisper.Core.Models.StreamingSettings();
+            }
+            
+            Settings.Streaming.Enabled = StreamingEnabledCheckBox.IsChecked == true;
+            
+            if (int.TryParse(PauseThresholdTextBox.Text, out int pauseThreshold))
+            {
+                Settings.Streaming.PauseThresholdMs = Math.Max(100, Math.Min(pauseThreshold, 5000));
+            }
+            
+            Settings.Streaming.AutoStopOnLongPause = AutoStopCheckBox.IsChecked == true;
+            
+            if (int.TryParse(AutoStopPauseTextBox.Text, out int autoStopPause))
+            {
+                Settings.Streaming.AutoStopPauseDurationMs = Math.Max(1000, Math.Min(autoStopPause, 10000));
+            }
 
             DialogResult = true;
             Close();
@@ -208,4 +235,3 @@ namespace LWhisper.UI.WPF.Views
         }
     }
 }
-
