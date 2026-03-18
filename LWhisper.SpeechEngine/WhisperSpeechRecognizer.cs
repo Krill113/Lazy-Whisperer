@@ -34,25 +34,26 @@ namespace LWhisper.SpeechEngine
             {
                 try
                 {
-                    var factory = WhisperFactory.FromPath(_modelPath);
-                    _processor = factory.CreateBuilder()
+                    var factory = WhisperFactory.FromPath(_modelPath, new WhisperFactoryOptions
+                    {
+                        UseGpu = true,
+                        UseFlashAttention = true
+                    });
+
+                    var builder = factory.CreateBuilder()
                         .WithLanguage("auto")
-                        .WithPrompt("") // Отключить initial prompt - предотвращает "запоминание" контекста
-                        .Build();
-                    
-                    // Whisper.net автоматически использует GPU если доступен CUDA runtime
-                    // Определяем по наличию Whisper.net.Runtime.Cuda.dll
-                    _isUsingGpu = IsCudaAvailable();
-                    
-                    if (_isUsingGpu)
-                    {
-                        Log.Information("✅ Whisper инициализирован с GPU (CUDA) - ускорение активно!");
-                    }
-                    else
-                    {
-                        Log.Information("Whisper инициализирован с CPU. Для ускорения установите CUDA Toolkit (NVIDIA GPU).");
-                    }
-                    
+                        .WithPrompt("")
+                        .WithNoContext()
+                        .WithSingleSegment();
+                    builder.WithGreedySamplingStrategy();
+                    _processor = builder.Build();
+
+                    var runtimeInfo = WhisperFactory.GetRuntimeInfo();
+                    _isUsingGpu = runtimeInfo != null &&
+                        (runtimeInfo.Contains("vulkan", StringComparison.OrdinalIgnoreCase) ||
+                         runtimeInfo.Contains("cuda", StringComparison.OrdinalIgnoreCase));
+                    Log.Information("Whisper runtime: {RuntimeInfo}, GPU: {IsGpu}", runtimeInfo ?? "unknown", _isUsingGpu);
+
                     _isInitialized = true;
                 }
                 catch (Exception ex)
@@ -61,23 +62,6 @@ namespace LWhisper.SpeechEngine
                     throw;
                 }
             });
-        }
-
-        /// <summary>
-        /// Проверить доступность CUDA runtime
-        /// </summary>
-        private bool IsCudaAvailable()
-        {
-            try
-            {
-                // Проверяем наличие CUDA runtime DLL
-                var cudaRuntimePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "runtimes", "win-x64", "native", "ggml-cuda.dll");
-                return File.Exists(cudaRuntimePath);
-            }
-            catch
-            {
-                return false;
-            }
         }
 
         public async Task<RecognitionResult> RecognizeAsync(AudioData audioData, CancellationToken cancellationToken = default)
