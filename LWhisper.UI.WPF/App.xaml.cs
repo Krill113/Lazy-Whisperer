@@ -14,6 +14,9 @@ namespace LWhisper.UI.WPF
     /// </summary>
     public partial class App : Application
     {
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+
         private FloatingMicrophoneWidget? _widget;
         private PreviewWindow? _previewWindow;
         private ISpeechRecognizer? _speechRecognizer;
@@ -103,6 +106,7 @@ namespace LWhisper.UI.WPF
                 _widget.ShowTextRequested += OnShowTextRequested;
                 _widget.RememberTargetWindow += OnRememberTargetWindow;
                 _widget.MinimizeRequested += OnMinimizeRequested;
+                _widget.CloseRequested += OnCloseRequested;
                 _widget.Show();
 
                 var hwnd = new WindowInteropHelper(_widget).Handle;
@@ -317,15 +321,32 @@ namespace LWhisper.UI.WPF
 
         private void OnShowMicrophoneRequested()
         {
-            _widget?.Show();
-            _widget?.Activate();
-            Log.Debug("Показан виджет микрофона");
+            if (_widget == null) return;
+
+            _widget.Show();
+            _widget.Activate();
+
+            // Гарантированный вынос на передний план через WinAPI (per TRAY-02)
+            var hwnd = new WindowInteropHelper(_widget).Handle;
+            if (hwnd != IntPtr.Zero)
+            {
+                SetForegroundWindow(hwnd);
+            }
+
+            Log.Debug("Показан виджет микрофона (SetForegroundWindow)");
         }
 
         private void OnMinimizeRequested()
         {
             _widget?.Hide();
             Log.Debug("Виджет свернут в трей по запросу пользователя");
+        }
+
+        private void OnCloseRequested()
+        {
+            Log.Information("Закрытие приложения по кнопке X виджета");
+            SaveWidgetPosition();
+            Shutdown();
         }
 
         private void OnSettingsRequested()
@@ -436,6 +457,12 @@ namespace LWhisper.UI.WPF
 
         private void ToggleRecording()
         {
+            // Если виджет скрыт (свёрнут в трей), сначала показать его (per TRAY-01)
+            if (_widget != null && !_widget.IsVisible)
+            {
+                OnShowMicrophoneRequested();
+            }
+
             if (_isRecording)
             {
                 OnRecordingStopped();
