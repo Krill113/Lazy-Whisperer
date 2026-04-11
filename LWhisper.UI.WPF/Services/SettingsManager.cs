@@ -49,7 +49,25 @@ namespace LWhisper.UI.WPF.Services
                         settings.WidgetPositionY = -1;
                         Log.Information("Миграция настроек: сброшена позиция виджета 0,0 -> -1,-1");
                     }
-                    
+
+                    // Миграция: устаревшие модели (tiny убрана из каталога)
+                    if (ModelCatalog.DeprecatedMigrations.TryGetValue(settings.WhisperModelSize, out var replacementModelId))
+                    {
+                        Log.Information("Миграция настроек: модель {OldModel} заменена на {NewModel}",
+                            settings.WhisperModelSize, replacementModelId);
+                        settings.WhisperModelSize = replacementModelId;
+                        Save(settings);
+                    }
+
+                    // Валидация: если модель не найдена в каталоге, сброс на дефолт
+                    if (!ModelCatalog.IsValidModelId(settings.WhisperModelSize))
+                    {
+                        Log.Warning("Неизвестная модель {Model}, сброс на {Default}",
+                            settings.WhisperModelSize, ModelCatalog.DefaultModelId);
+                        settings.WhisperModelSize = ModelCatalog.DefaultModelId;
+                        Save(settings);
+                    }
+
                     return settings;
                 }
             }
