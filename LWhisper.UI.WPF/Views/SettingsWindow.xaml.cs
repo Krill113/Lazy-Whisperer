@@ -40,6 +40,7 @@ namespace LWhisper.UI.WPF.Views
                 AutoInsertDelaySeconds = currentSettings.AutoInsertDelaySeconds,
                 AutoInsertEnabled = currentSettings.AutoInsertEnabled,
                 SelectedAudioDevice = currentSettings.SelectedAudioDevice,
+                RecognitionLanguage = currentSettings.RecognitionLanguage,
                 WhisperModelSize = currentSettings.WhisperModelSize,
                 Streaming = currentSettings.Streaming ?? new StreamingSettings()
             };
@@ -126,6 +127,16 @@ namespace LWhisper.UI.WPF.Views
             // Загрузить настройки VAD
             VadAggressivenessSlider.Value = Settings.Streaming?.VadAggressiveness ?? 2;
             PostSpeechPaddingSlider.Value = Settings.Streaming?.PostSpeechPaddingMs ?? 400;
+
+            // Выбрать язык распознавания
+            foreach (System.Windows.Controls.ComboBoxItem item in LanguageComboBox.Items)
+            {
+                if (item.Tag.ToString() == Settings.RecognitionLanguage)
+                {
+                    LanguageComboBox.SelectedItem = item;
+                    break;
+                }
+            }
         }
 
         private void LoadAudioDevices(List<string> devices)
@@ -417,6 +428,13 @@ namespace LWhisper.UI.WPF.Views
             if (selectedModel != null)
             {
                 Settings.WhisperModelSize = selectedModel.Id;
+            }
+
+            // Сохранить язык распознавания (SETT-01, SETT-02)
+            var selectedLanguage = LanguageComboBox.SelectedItem as System.Windows.Controls.ComboBoxItem;
+            if (selectedLanguage != null)
+            {
+                Settings.RecognitionLanguage = selectedLanguage.Tag.ToString()!;
             }
 
             // Сохранить настройки потокового режима
