@@ -12,6 +12,7 @@ namespace LWhisper.UI.WPF.Views
     {
         public AppSettings Settings { get; private set; }
         private readonly HttpClient _httpClient = new();
+        private static readonly string[] _aggressivenessLabels = { "Мягкий", "Норма", "Строгий", "Максимум" };
 
         public SettingsWindow(AppSettings currentSettings, List<string> audioDevices)
         {
@@ -67,6 +68,10 @@ namespace LWhisper.UI.WPF.Views
             PauseThresholdTextBox.Text = Settings.Streaming?.PauseThresholdMs.ToString() ?? "1000";
             AutoStopCheckBox.IsChecked = Settings.Streaming?.AutoStopOnLongPause ?? false;
             AutoStopPauseTextBox.Text = Settings.Streaming?.AutoStopPauseDurationMs.ToString() ?? "3000";
+
+            // Загрузить настройки VAD
+            VadAggressivenessSlider.Value = Settings.Streaming?.VadAggressiveness ?? 2;
+            PostSpeechPaddingSlider.Value = Settings.Streaming?.PostSpeechPaddingMs ?? 400;
         }
 
         private void LoadAudioDevices(List<string> devices)
@@ -177,6 +182,19 @@ namespace LWhisper.UI.WPF.Views
             }
         }
 
+        private void VadAggressivenessSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            int level = (int)e.NewValue;
+            if (VadAggressivenessLabel != null)
+                VadAggressivenessLabel.Text = $"{level} — {_aggressivenessLabels[level]}";
+        }
+
+        private void PostSpeechPaddingSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (PostSpeechPaddingLabel != null)
+                PostSpeechPaddingLabel.Text = $"{(int)e.NewValue} мс";
+        }
+
         private void SaveButton_Click(object sender, RoutedEventArgs e)
         {
             if (ToggleModeRadio.IsChecked == true)
@@ -223,6 +241,9 @@ namespace LWhisper.UI.WPF.Views
             {
                 Settings.Streaming.AutoStopPauseDurationMs = Math.Max(1000, Math.Min(autoStopPause, 10000));
             }
+
+            Settings.Streaming.VadAggressiveness = Math.Max(0, Math.Min((int)VadAggressivenessSlider.Value, 3));
+            Settings.Streaming.PostSpeechPaddingMs = Math.Max(100, Math.Min((int)PostSpeechPaddingSlider.Value, 800));
 
             DialogResult = true;
             Close();
