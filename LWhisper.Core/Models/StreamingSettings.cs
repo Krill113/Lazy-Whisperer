@@ -13,15 +13,15 @@ namespace LWhisper.Core.Models
 
         /// <summary>
         /// Длительность паузы для завершения сегмента (миллисекунды)
-        /// Рекомендуется: 1000мс для запятых
+        /// Рекомендуется: 1500мс для естественных пауз
         /// </summary>
-        public int PauseThresholdMs { get; set; } = 1000;
+        public int PauseThresholdMs { get; set; } = 1500;
 
         /// <summary>
         /// Минимальная длительность сегмента для отправки на распознавание (миллисекунды)
         /// Короткие фрагменты будут игнорироваться как шум
         /// </summary>
-        public int MinSegmentDurationMs { get; set; } = 1500;
+        public int MinSegmentDurationMs { get; set; } = 2000;
 
         /// <summary>
         /// Максимальная длительность сегмента (миллисекунды)
@@ -44,6 +44,17 @@ namespace LWhisper.Core.Models
         /// Максимальное количество параллельных задач распознавания
         /// </summary>
         public int MaxParallelRecognitions { get; set; } = 3;
+
+        /// <summary>
+        /// Агрессивность VAD-фильтрации (0-3). 0=Мягкий, 1=Норма, 2=Строгий, 3=Максимум
+        /// </summary>
+        public int VadAggressiveness { get; set; } = 2;
+
+        /// <summary>
+        /// Задержка после окончания речи перед отсечкой сегмента (мс).
+        /// Устраняет обрезание последних слов фразы. Тишина не включается в аудио сегмента.
+        /// </summary>
+        public int PostSpeechPaddingMs { get; set; } = 400;
     }
 }
 

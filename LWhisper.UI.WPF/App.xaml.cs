@@ -207,10 +207,8 @@ namespace LWhisper.UI.WPF
                         _settings.Streaming = new StreamingSettings();
                     }
                     
-                    // Выбрать агрессивность VAD в зависимости от типа распознавателя
-                    // Mock распознаватель требует более агрессивную фильтрацию (3),
-                    // чтобы не создавать сегменты из фонового шума
-                    int vadAggressiveness = _speechRecognizer is MockSpeechRecognizer ? 3 : 2;
+                    // Агрессивность VAD из настроек пользователя (0-3)
+                    int vadAggressiveness = _settings.Streaming.VadAggressiveness;
                     
                     // Создать VAD
                     _vad = new WebRtcVoiceActivityDetector(aggressiveness: vadAggressiveness);

@@ -30,6 +30,7 @@ namespace LWhisper.UI.WPF.Services
         private int _consecutiveSilenceMs = 0;
         private int _totalSilenceSinceLastSpeechMs = 0; // Для автостопа
         private int _segmentCounter = 0;
+        private int _silenceBufferBytes = 0;
 
         // События для потокового режима
         public event Action<AudioData>? SegmentReady;
@@ -65,6 +66,7 @@ namespace LWhisper.UI.WPF.Services
             _consecutiveSilenceMs = 0;
             _totalSilenceSinceLastSpeechMs = 0;
             _segmentCounter = 0;
+            _silenceBufferBytes = 0;
 
             _waveIn = new WaveInEvent
             {
@@ -99,19 +101,20 @@ namespace LWhisper.UI.WPF.Services
                 _lastSpeechTime = DateTime.Now;
                 _consecutiveSilenceMs = 0;
                 _totalSilenceSinceLastSpeechMs = 0; // Сбросить счетчик для автостопа
+                _silenceBufferBytes = 0;
             }
             else
             {
                 // Тишина - увеличить счётчики
+                _silenceBufferBytes += e.BytesRecorded;
                 _consecutiveSilenceMs += 30; // BufferMilliseconds = 30
                 _totalSilenceSinceLastSpeechMs += 30;
 
                 var segmentDuration = GetSegmentDurationMs();
 
-                // КРИТИЧНО: Игнорировать микропаузы (< 300мс) между словами
-                if (_consecutiveSilenceMs < 300)
+                // Post-speech padding: ждём перед отсечкой сегмента (D-08)
+                if (_consecutiveSilenceMs < _settings.PostSpeechPaddingMs)
                 {
-                    // Это просто дыхание между словами - продолжаем накапливать
                     return;
                 }
 
@@ -206,6 +209,16 @@ namespace LWhisper.UI.WPF.Services
                     return;
                 }
 
+                // Обрезать тишину из конца сегмента (D-08)
+                if (_silenceBufferBytes > 0 && _currentSegmentBuffer.Length > _silenceBufferBytes)
+                {
+                    _currentSegmentBuffer.SetLength(_currentSegmentBuffer.Length - _silenceBufferBytes);
+                    Log.Debug("[Segment] Обрезано {SilenceBytes} байт тишины из конца сегмента", _silenceBufferBytes);
+                }
+
+                // Пересчитать длительность после обрезки тишины
+                var trimmedDuration = GetSegmentDurationMs();
+
                 var segmentId = System.Threading.Interlocked.Increment(ref _segmentCounter);
                 var audioData = new AudioData
                 {
@@ -213,11 +226,11 @@ namespace LWhisper.UI.WPF.Services
                     SampleRate = _sampleRate,
                     Channels = _channels,
                     BitsPerSample = _bitsPerSample,
-                    Duration = TimeSpan.FromMilliseconds(duration)
+                    Duration = TimeSpan.FromMilliseconds(trimmedDuration)
                 };
 
                 Log.Information("[Segment #{Id}] Сегмент готов: длительность={Duration}мс, размер={Size} bytes",
-                    segmentId, (int)duration, audioData.RawData.Length);
+                    segmentId, (int)trimmedDuration, audioData.RawData.Length);
 
                 // Отправить событие в фоновом потоке для неблокирующей работы
                 Task.Run(() =>
@@ -235,6 +248,7 @@ namespace LWhisper.UI.WPF.Services
                 // Очистить буфер для следующего сегмента
                 _currentSegmentBuffer = new MemoryStream();
                 _consecutiveSilenceMs = 0;
+                _silenceBufferBytes = 0;
             }
         }
 
