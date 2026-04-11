@@ -147,7 +147,7 @@ namespace LWhisper.UI.WPF
             {
                 try
                 {
-                    var whisperRecognizer = new LWhisper.SpeechEngine.WhisperSpeechRecognizer(modelPath, _settings.RecognitionLanguage);
+                    var whisperRecognizer = new LWhisper.SpeechEngine.WhisperSpeechRecognizer(modelPath, _settings.RecognitionLanguage, _settings.GpuFailed);
 
                     // ВАЖНО: Инициализировать асинхронно
                     Task.Run(async () =>
@@ -155,6 +155,14 @@ namespace LWhisper.UI.WPF
                         await whisperRecognizer.InitializeAsync();
                         Log.Information("WhisperSpeechRecognizer инициализирован и готов к работе");
                     }).Wait(); // Ждем завершения инициализации
+
+                    // PERF-03: Если GPU не загрузилась — сохранить флаг чтобы не пробовать на следующих запусках
+                    if (whisperRecognizer.GpuInitFailed && !_settings.GpuFailed)
+                    {
+                        _settings.GpuFailed = true;
+                        _settingsManager?.Save(_settings);
+                        Log.Information("Флаг GpuFailed сохранён в настройках — следующий запуск пропустит Vulkan");
+                    }
 
                     _speechRecognizer = whisperRecognizer;
                     Log.Information("Инициализирован WhisperSpeechRecognizer с моделью: {Model} ({Path})", _settings.WhisperModelSize, modelPath);
