@@ -22,6 +22,7 @@ namespace LWhisper.UI.WPF.Views
         public event Action? ShowTextRequested;
         public event Action? RememberTargetWindow;
         public event Action? MinimizeRequested;
+        public event Action? CloseRequested;
 
         public FloatingMicrophoneWidget()
         {
@@ -218,6 +219,32 @@ namespace LWhisper.UI.WPF.Views
         private void MinimizeButton_Click(object sender, MouseButtonEventArgs e)
         {
             MinimizeRequested?.Invoke();
+            e.Handled = true;
+        }
+
+        private void CloseButton_MouseEnter(object sender, MouseEventArgs e)
+        {
+            var border = sender as Border;
+            if (border != null)
+            {
+                border.Opacity = 1.0;
+                border.Background = new SolidColorBrush(Color.FromArgb(0xFF, 0xC0, 0x39, 0x2B));
+            }
+        }
+
+        private void CloseButton_MouseLeave(object sender, MouseEventArgs e)
+        {
+            var border = sender as Border;
+            if (border != null)
+            {
+                border.Opacity = 0.7;
+                border.Background = new SolidColorBrush(Color.FromArgb(0xCC, 0xE7, 0x4C, 0x3C));
+            }
+        }
+
+        private void CloseButton_Click(object sender, MouseButtonEventArgs e)
+        {
+            CloseRequested?.Invoke();
             e.Handled = true;
         }
     }
