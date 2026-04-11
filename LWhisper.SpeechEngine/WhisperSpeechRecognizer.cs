@@ -11,6 +11,7 @@ namespace LWhisper.SpeechEngine
     /// </summary>
     public class WhisperSpeechRecognizer : ISpeechRecognizer, IDisposable
     {
+        private WhisperFactory? _factory;
         private WhisperProcessor? _processor;
         private readonly string _modelPath;
         private readonly string _language;
@@ -52,14 +53,14 @@ namespace LWhisper.SpeechEngine
                         Log.Information("GPU ранее не инициализировалась — используется только CPU рантайм (RuntimeLibraryOrder=[Cpu])");
                     }
 
-                    var factory = WhisperFactory.FromPath(_modelPath, new WhisperFactoryOptions
+                    _factory = WhisperFactory.FromPath(_modelPath, new WhisperFactoryOptions
                     {
                         UseGpu = !_gpuFailed,
                         // PERF-05: Flash Attention оптимизирован для GPU; на CPU может замедлять — отключаем
                         UseFlashAttention = false
                     });
 
-                    var builder = factory.CreateBuilder()
+                    var builder = _factory.CreateBuilder()
                         .WithLanguage(_language)
                         // PERF-02: WithPrompt("") убран — пустая строка это не "нет промпта", а промпт с пустой строкой
                         .WithNoContext()
@@ -137,6 +138,73 @@ namespace LWhisper.SpeechEngine
             }
         }
 
+        /// <summary>
+        /// Распознавание сегмента в streaming mode с динамическим AudioContextSize.
+        /// EXPERIMENTAL (PERF-04): WithAudioContextSize помечен как экспериментальный в Whisper.net.
+        /// Вычисляет оптимальный размер контекстного окна по длине аудио сегмента.
+        /// В случае ошибки fallback на обычный RecognizeAsync.
+        /// </summary>
+        public async Task<RecognitionResult> RecognizeStreamingAsync(AudioData audioData, CancellationToken cancellationToken = default)
+        {
+            if (!_isInitialized || _factory == null)
+            {
+                return new RecognitionResult
+                {
+                    Success = false,
+                    ErrorMessage = "Whisper не инициализирован"
+                };
+            }
+
+            try
+            {
+                // PERF-04 EXPERIMENTAL: динамический расчёт AudioContextSize
+                // Дефолт = 1500 (рассчитан на 30 сек). Для коротких сегментов streaming mode это избыточно.
+                // Формула: (duration_sec / 30.0) * 1500, округление вверх до кратного 64, минимум 256
+                var durationSec = audioData.Duration.TotalSeconds;
+                var rawContextSize = (int)Math.Ceiling((durationSec / 30.0) * 1500);
+                var alignedContextSize = ((rawContextSize + 63) / 64) * 64; // округление вверх до кратного 64
+                var audioContextSize = Math.Max(256, alignedContextSize);
+
+                Log.Debug("Streaming recognition: duration={Duration:F1}s, audioContextSize={ContextSize} (raw={RawSize})",
+                    durationSec, audioContextSize, rawContextSize);
+
+                var floatData = ConvertBytesToFloat(audioData.RawData);
+
+                // Создаём отдельный процессор с оптимизированным контекстным окном
+                var streamingBuilder = _factory.CreateBuilder()
+                    .WithLanguage(_language)
+                    .WithNoContext()
+                    .WithSingleSegment()
+                    .WithThreads(Environment.ProcessorCount)
+                    // PERF-04 EXPERIMENTAL: уменьшенное контекстное окно для коротких сегментов
+                    .WithAudioContextSize(audioContextSize);
+                streamingBuilder.WithGreedySamplingStrategy();
+                using var streamingProcessor = streamingBuilder.Build();
+
+                var segments = new List<string>();
+                await foreach (var segment in streamingProcessor.ProcessAsync(floatData, cancellationToken))
+                {
+                    segments.Add(segment.Text);
+                }
+
+                var text = string.Join(" ", segments).Trim();
+
+                return new RecognitionResult
+                {
+                    Success = true,
+                    Text = text,
+                    DetectedLanguage = _language,
+                    Confidence = 1.0f
+                };
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Streaming recognition с AudioContextSize failed — fallback на стандартный RecognizeAsync");
+                // Fallback: если экспериментальный метод сломался, использовать обычный
+                return await RecognizeAsync(audioData, cancellationToken);
+            }
+        }
+
         private float[] ConvertBytesToFloat(byte[] bytes)
         {
             var floats = new float[bytes.Length / 2];
@@ -151,6 +219,7 @@ namespace LWhisper.SpeechEngine
         public void Dispose()
         {
             _processor?.Dispose();
+            _factory?.Dispose();
         }
     }
 }
