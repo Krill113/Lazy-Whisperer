@@ -13,14 +13,16 @@ namespace LWhisper.SpeechEngine
     {
         private WhisperProcessor? _processor;
         private readonly string _modelPath;
+        private readonly string _language;
         private bool _isInitialized;
         private bool _isUsingGpu;
 
         public bool IsReady => _isInitialized;
 
-        public WhisperSpeechRecognizer(string modelPath)
+        public WhisperSpeechRecognizer(string modelPath, string language = "auto")
         {
             _modelPath = modelPath;
+            _language = language;
         }
 
         /// <summary>
@@ -41,7 +43,7 @@ namespace LWhisper.SpeechEngine
                     });
 
                     var builder = factory.CreateBuilder()
-                        .WithLanguage("auto")
+                        .WithLanguage(_language)
                         .WithPrompt("")
                         .WithNoContext()
                         .WithSingleSegment();
@@ -55,6 +57,7 @@ namespace LWhisper.SpeechEngine
                     Log.Information("Whisper runtime: {RuntimeInfo}, GPU: {IsGpu}", runtimeInfo ?? "unknown", _isUsingGpu);
 
                     _isInitialized = true;
+                    Log.Information("Whisper язык распознавания: {Language}", _language);
                 }
                 catch (Exception ex)
                 {
@@ -91,7 +94,7 @@ namespace LWhisper.SpeechEngine
                 {
                     Success = true,
                     Text = text,
-                    DetectedLanguage = "auto",
+                    DetectedLanguage = _language,
                     Confidence = 1.0f
                 };
             }

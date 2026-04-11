@@ -147,7 +147,7 @@ namespace LWhisper.UI.WPF
             {
                 try
                 {
-                    var whisperRecognizer = new LWhisper.SpeechEngine.WhisperSpeechRecognizer(modelPath);
+                    var whisperRecognizer = new LWhisper.SpeechEngine.WhisperSpeechRecognizer(modelPath, _settings.RecognitionLanguage);
 
                     // ВАЖНО: Инициализировать асинхронно
                     Task.Run(async () =>
