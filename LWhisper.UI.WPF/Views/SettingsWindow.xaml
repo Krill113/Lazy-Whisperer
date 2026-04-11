@@ -131,6 +131,26 @@
                     <TextBlock Text="Задержка после тишины перед отсечкой сегмента (100–800 мс)"
                                FontSize="10" Foreground="Gray" Margin="0,4,0,4"/>
 
+                    <StackPanel Margin="0,8,0,0">
+                        <StackPanel Orientation="Horizontal">
+                            <Button x:Name="CalibrateVadButton"
+                                    Content="Калибровка VAD"
+                                    Width="140" HorizontalAlignment="Left"
+                                    Click="CalibrateVadButton_Click"/>
+                            <TextBlock Text="(3 сек тишины)"
+                                       FontSize="10" Foreground="Gray"
+                                       VerticalAlignment="Center" Margin="8,0,0,0"/>
+                        </StackPanel>
+                        <ProgressBar x:Name="CalibrationProgressBar"
+                                     Height="8" Margin="0,8,0,0"
+                                     Visibility="Collapsed"
+                                     Minimum="0" Maximum="100"/>
+                        <TextBlock x:Name="CalibrationResultText"
+                                   Text="" Margin="0,4,0,0"
+                                   FontSize="11" TextWrapping="Wrap"
+                                   Foreground="#333333"/>
+                    </StackPanel>
+
                     <TextBlock Text="Рекомендуется: 1500мс для запятых, 3000мс для точек"
                                FontSize="10" Foreground="Gray" Margin="0,10,0,0"/>
                 </StackPanel>

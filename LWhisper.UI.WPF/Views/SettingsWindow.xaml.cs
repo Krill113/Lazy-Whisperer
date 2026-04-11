@@ -2,6 +2,7 @@ using System.Windows;
 using System.IO;
 using System.Net.Http;
 using LWhisper.Core.Models;
+using NAudio.Wave;
 
 namespace LWhisper.UI.WPF.Views
 {
@@ -193,6 +194,142 @@ namespace LWhisper.UI.WPF.Views
         {
             if (PostSpeechPaddingLabel != null)
                 PostSpeechPaddingLabel.Text = $"{(int)e.NewValue} мс";
+        }
+
+        /// <summary>
+        /// Калибровка VAD: запись 3 секунд тишины, вычисление RMS/dBFS, автоподбор aggressiveness
+        /// </summary>
+        private async void CalibrateVadButton_Click(object sender, RoutedEventArgs e)
+        {
+            CalibrateVadButton.IsEnabled = false;
+            CalibrationProgressBar.Visibility = Visibility.Visible;
+            CalibrationProgressBar.Value = 0;
+            CalibrationResultText.Text = "Запись тишины...";
+            CalibrationResultText.Foreground = new System.Windows.Media.SolidColorBrush(
+                (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#333333"));
+
+            WaveInEvent? waveIn = null;
+            try
+            {
+                var samples = new List<short>();
+                var tcs = new TaskCompletionSource<bool>();
+                var shouldStop = false;
+
+                waveIn = new WaveInEvent
+                {
+                    WaveFormat = new WaveFormat(16000, 16, 1),
+                    BufferMilliseconds = 100
+                };
+
+                waveIn.DataAvailable += (_, args) =>
+                {
+                    if (shouldStop) return;
+
+                    for (int i = 0; i + 1 < args.BytesRecorded; i += 2)
+                        samples.Add(BitConverter.ToInt16(args.Buffer, i));
+
+                    // 48000 samples = 3 sec at 16kHz
+                    var progress = Math.Min(100.0, samples.Count / 480.0);
+                    Dispatcher.Invoke(() =>
+                    {
+                        if (CalibrationProgressBar.Visibility == Visibility.Visible)
+                            CalibrationProgressBar.Value = progress;
+                    });
+
+                    if (samples.Count >= 48000)
+                    {
+                        shouldStop = true;
+                        tcs.TrySetResult(true);
+                    }
+                };
+
+                waveIn.RecordingStopped += (_, _) =>
+                {
+                    tcs.TrySetResult(true);
+                };
+
+                waveIn.StartRecording();
+
+                // Wait for completion or 4-second timeout
+                await Task.WhenAny(tcs.Task, Task.Delay(4000));
+
+                shouldStop = true;
+                waveIn.StopRecording();
+
+                if (samples.Count < 8000) // Less than 0.5 sec of data
+                {
+                    CalibrationResultText.Text = "Ошибка калибровки. Проверьте доступность микрофона.";
+                    CalibrationResultText.Foreground = new System.Windows.Media.SolidColorBrush(
+                        (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#E74C3C"));
+                    return;
+                }
+
+                // Calculate RMS
+                double sumSquares = 0;
+                for (int i = 0; i < samples.Count; i++)
+                    sumSquares += (double)samples[i] * samples[i];
+                double rms = Math.Sqrt(sumSquares / samples.Count);
+                double dBFS = rms > 0 ? 20 * Math.Log10(rms / 32768.0) : -96.0;
+
+                // Map dB to aggressiveness (UI-SPEC algorithm)
+                int recommended;
+                string noiseLevel;
+                string resultColor;
+
+                if (dBFS < -50)
+                {
+                    recommended = 0;
+                    noiseLevel = "тихо";
+                    resultColor = "#27AE60";
+                }
+                else if (dBFS < -40)
+                {
+                    recommended = 1;
+                    noiseLevel = "нормально";
+                    resultColor = "#333333";
+                }
+                else if (dBFS < -30)
+                {
+                    recommended = 2;
+                    noiseLevel = "шумно";
+                    resultColor = "#333333";
+                }
+                else
+                {
+                    recommended = 3;
+                    noiseLevel = "очень шумно";
+                    resultColor = "#E67E22";
+                }
+
+                // Update slider (D-04)
+                VadAggressivenessSlider.Value = recommended;
+
+                // Show result (D-03)
+                CalibrationResultText.Foreground = new System.Windows.Media.SolidColorBrush(
+                    (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(resultColor));
+                CalibrationResultText.Text = $"Уровень шума: {dBFS:F1} дБ ({noiseLevel}). Рекомендуется: {recommended} — {_aggressivenessLabels[recommended]}";
+
+                // Warning for high noise (D-05)
+                if (dBFS > -30)
+                {
+                    CalibrationResultText.Text += "\nВысокий уровень шума. Рекомендуем тихое помещение.";
+                }
+
+                Serilog.Log.Information("Калибровка VAD: {dBFS:F1} дБ, рекомендуется aggressiveness={Recommended}", dBFS, recommended);
+            }
+            catch (Exception ex)
+            {
+                CalibrationResultText.Text = "Ошибка калибровки. Проверьте доступность микрофона.";
+                CalibrationResultText.Foreground = new System.Windows.Media.SolidColorBrush(
+                    (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#E74C3C"));
+                Serilog.Log.Error(ex, "Ошибка калибровки VAD");
+            }
+            finally
+            {
+                waveIn?.Dispose();
+                CalibrationProgressBar.Visibility = Visibility.Collapsed;
+                CalibrateVadButton.IsEnabled = true;
+            }
         }
 
         private void SaveButton_Click(object sender, RoutedEventArgs e)
