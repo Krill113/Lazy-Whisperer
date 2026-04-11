@@ -13,6 +13,10 @@ namespace LWhisper.UI.WPF.Views
     public partial class SettingsWindow : Window
     {
         public AppSettings Settings { get; private set; }
+        /// <summary>
+        /// Флаг принятия настроек — используется вместо DialogResult для совместимости с немодальным режимом (Show())
+        /// </summary>
+        public bool SettingsAccepted { get; private set; }
         private readonly HttpClient _httpClient = new();
         private static readonly string[] _aggressivenessLabels = { "Мягкий", "Норма", "Строгий", "Максимум" };
 
@@ -460,13 +464,15 @@ namespace LWhisper.UI.WPF.Views
             Settings.Streaming.VadAggressiveness = Math.Max(0, Math.Min((int)VadAggressivenessSlider.Value, 3));
             Settings.Streaming.PostSpeechPaddingMs = Math.Max(100, Math.Min((int)PostSpeechPaddingSlider.Value, 800));
 
-            DialogResult = true;
+            SettingsAccepted = true;
+            try { DialogResult = true; } catch (System.InvalidOperationException) { }
             Close();
         }
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)
         {
-            DialogResult = false;
+            SettingsAccepted = false;
+            try { DialogResult = false; } catch (System.InvalidOperationException) { }
             Close();
         }
     }

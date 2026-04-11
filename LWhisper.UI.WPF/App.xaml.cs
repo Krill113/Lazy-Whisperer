@@ -391,8 +391,8 @@ namespace LWhisper.UI.WPF
 
                 _settingsWindow.Closed += (s, e) =>
                 {
-                    // Проверить DialogResult — если OK, применить настройки
-                    if (_settingsWindow.DialogResult == true)
+                    // Проверить SettingsAccepted — DialogResult недоступен для немодальных окон (Show())
+                    if (_settingsWindow.SettingsAccepted)
                     {
                         _settings = _settingsWindow.Settings;
                         ApplySettings();
