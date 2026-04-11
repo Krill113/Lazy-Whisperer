@@ -1,5 +1,6 @@
 using LWhisper.Core.Interfaces;
 using LWhisper.Core.Models;
+using LWhisper.SpeechEngine;
 using Serilog;
 using System.Collections.Concurrent;
 
@@ -91,7 +92,17 @@ namespace LWhisper.UI.WPF.Services
                         return new RecognitionResult { Success = true, Text = string.Empty };
                     }
                     
-                    var result = await _recognizer.RecognizeAsync(audioData, _cancellationTokenSource.Token);
+                    // PERF-04: Если распознаватель поддерживает streaming-оптимизацию (динамический AudioContextSize),
+                    // использовать RecognizeStreamingAsync для ускорения коротких сегментов
+                    RecognitionResult result;
+                    if (_recognizer is WhisperSpeechRecognizer whisperRecognizer)
+                    {
+                        result = await whisperRecognizer.RecognizeStreamingAsync(audioData, _cancellationTokenSource.Token);
+                    }
+                    else
+                    {
+                        result = await _recognizer.RecognizeAsync(audioData, _cancellationTokenSource.Token);
+                    }
                     var elapsed = (DateTime.Now - startTime).TotalMilliseconds;
 
                     if (result.Success && !string.IsNullOrWhiteSpace(result.Text))
