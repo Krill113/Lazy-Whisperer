@@ -17,6 +17,7 @@ namespace LWhisper.UI.WPF.Views
 
         public event Action<string>? InsertRequested;
         public event Action<bool>? AutoInsertSettingChanged;
+        public event Action? SettingsRequested;
 
         public PreviewWindow()
         {
@@ -152,6 +153,11 @@ namespace LWhisper.UI.WPF.Views
         private void InsertButton_Click(object sender, RoutedEventArgs e)
         {
             PerformInsert();
+        }
+
+        private void SettingsButton_Click(object sender, RoutedEventArgs e)
+        {
+            SettingsRequested?.Invoke();
         }
 
         private void AutoInsertCheckBox_Changed(object sender, RoutedEventArgs e)

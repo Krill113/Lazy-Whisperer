@@ -19,6 +19,7 @@ namespace LWhisper.UI.WPF
 
         private FloatingMicrophoneWidget? _widget;
         private PreviewWindow? _previewWindow;
+        private SettingsWindow? _settingsWindow;
         private ISpeechRecognizer? _speechRecognizer;
         private ITextInjector? _textInjector;
         private IAudioRecorder? _audioRecorder;
@@ -371,6 +372,46 @@ namespace LWhisper.UI.WPF
             }
         }
 
+        /// <summary>
+        /// Открыть настройки немодально (не блокирует запись и PreviewWindow)
+        /// </summary>
+        private void OpenSettingsNonModal()
+        {
+            // Если окно настроек уже открыто, просто активировать его
+            if (_settingsWindow != null && _settingsWindow.IsVisible)
+            {
+                _settingsWindow.Activate();
+                return;
+            }
+
+            try
+            {
+                var devices = _audioRecorder?.GetAvailableDevices() ?? new List<string>();
+                _settingsWindow = new SettingsWindow(_settings, devices);
+
+                _settingsWindow.Closed += (s, e) =>
+                {
+                    // Проверить DialogResult — если OK, применить настройки
+                    if (_settingsWindow.DialogResult == true)
+                    {
+                        _settings = _settingsWindow.Settings;
+                        ApplySettings();
+                        _settingsManager?.Save(_settings);
+                        Log.Information("Настройки сохранены (из PreviewWindow)");
+                    }
+                    _settingsWindow = null;
+                };
+
+                _settingsWindow.Show(); // Show() вместо ShowDialog() — немодально!
+                Log.Debug("Окно настроек открыто немодально");
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Ошибка при открытии настроек (немодально)");
+                _settingsWindow = null;
+            }
+        }
+
         private void ApplySettings()
         {
             _hotkeyManager?.UnregisterHotkey();
@@ -665,6 +706,8 @@ namespace LWhisper.UI.WPF
                     }
                 };
 
+                _previewWindow.SettingsRequested += OpenSettingsNonModal;
+
                 // Подписка на изменение настройки автовставки из PreviewWindow
                 _previewWindow.AutoInsertSettingChanged += (enabled) =>
                 {
@@ -780,10 +823,15 @@ namespace LWhisper.UI.WPF
             SaveWidgetPosition();
             _hotkeyManager?.UnregisterHotkey();
             _trayManager?.Dispose();
-            
+
             // Очистить ресурсы потокового режима
             CleanupAudioRecorder();
-            
+
+            if (_settingsWindow != null && _settingsWindow.IsVisible)
+            {
+                _settingsWindow.Close();
+            }
+
             Log.CloseAndFlush();
             base.OnExit(e);
         }
