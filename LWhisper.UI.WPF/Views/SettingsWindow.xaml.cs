@@ -2,6 +2,7 @@ using System.Windows;
 using System.IO;
 using System.Net.Http;
 using LWhisper.Core.Models;
+using LWhisper.UI.WPF.Services;
 using NAudio.Wave;
 
 namespace LWhisper.UI.WPF.Views
@@ -14,6 +15,19 @@ namespace LWhisper.UI.WPF.Views
         public AppSettings Settings { get; private set; }
         private readonly HttpClient _httpClient = new();
         private static readonly string[] _aggressivenessLabels = { "Мягкий", "Норма", "Строгий", "Максимум" };
+
+        /// <summary>
+        /// Элемент списка моделей для отображения в UI
+        /// </summary>
+        private class ModelListItem
+        {
+            public string Id { get; init; } = "";
+            public string DisplayName { get; init; } = "";
+            public string SizeText { get; init; } = "";
+            public string RamText { get; init; } = "";
+            public string QuantizationBadge { get; init; } = "";
+            public string StatusIndicator { get; init; } = "";
+        }
 
         public SettingsWindow(AppSettings currentSettings, List<string> audioDevices)
         {
@@ -30,8 +44,57 @@ namespace LWhisper.UI.WPF.Views
                 Streaming = currentSettings.Streaming ?? new StreamingSettings()
             };
 
+            PopulateModelList();
             LoadSettings();
             LoadAudioDevices(audioDevices);
+        }
+
+        /// <summary>
+        /// Заполнить список моделей из ModelCatalog и выбрать текущую модель
+        /// </summary>
+        private void PopulateModelList()
+        {
+            var items = new List<ModelListItem>();
+            foreach (var model in ModelCatalog.All)
+            {
+                string sizeText = model.FileSizeMB >= 1024
+                    ? $"{model.FileSizeMB / 1024.0:F1} ГБ"
+                    : $"{model.FileSizeMB} МБ";
+
+                string ramText = model.EstimatedRamMB >= 1024
+                    ? $"~{model.EstimatedRamMB / 1024.0:F1} ГБ RAM"
+                    : $"~{model.EstimatedRamMB} МБ RAM";
+
+                string badge = model.IsQuantized ? $"[{model.QuantizationType}]" : "";
+
+                string status = File.Exists(ModelCatalog.GetModelPath(model)) ? "✓" : "";
+
+                items.Add(new ModelListItem
+                {
+                    Id = model.Id,
+                    DisplayName = model.DisplayName,
+                    SizeText = sizeText,
+                    RamText = ramText,
+                    QuantizationBadge = badge,
+                    StatusIndicator = status
+                });
+            }
+
+            WhisperModelListBox.ItemsSource = items;
+
+            // Выбрать текущую модель
+            var selected = items.Find(i => i.Id == Settings.WhisperModelSize);
+            if (selected != null)
+            {
+                WhisperModelListBox.SelectedItem = selected;
+            }
+            else if (items.Count > 0)
+            {
+                // Fallback: выбрать модель по умолчанию
+                var defaultItem = items.Find(i => i.Id == ModelCatalog.DefaultModelId);
+                WhisperModelListBox.SelectedItem = defaultItem ?? items[0];
+            }
+
             CheckModelStatus();
         }
 
@@ -54,16 +117,6 @@ namespace LWhisper.UI.WPF.Views
             AutoInsertDelayTextBox.Text = Settings.AutoInsertDelaySeconds.ToString();
             AutoInsertEnabledCheckBox.IsChecked = Settings.AutoInsertEnabled;
 
-            // Выбрать модель
-            foreach (System.Windows.Controls.ComboBoxItem item in WhisperModelComboBox.Items)
-            {
-                if (item.Tag.ToString() == Settings.WhisperModelSize)
-                {
-                    WhisperModelComboBox.SelectedItem = item;
-                    break;
-                }
-            }
-            
             // Загрузить настройки потокового режима
             StreamingEnabledCheckBox.IsChecked = Settings.Streaming?.Enabled ?? true;
             PauseThresholdTextBox.Text = Settings.Streaming?.PauseThresholdMs.ToString() ?? "1000";
@@ -88,9 +141,20 @@ namespace LWhisper.UI.WPF.Views
             }
         }
 
+        private void WhisperModelListBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            CheckModelStatus();
+        }
+
         private void CheckModelStatus()
         {
-            var modelPath = GetModelPath(Settings.WhisperModelSize);
+            var selectedItem = WhisperModelListBox.SelectedItem as ModelListItem;
+            if (selectedItem == null) return;
+
+            var model = ModelCatalog.GetById(selectedItem.Id);
+            if (model == null) return;
+
+            var modelPath = ModelCatalog.GetModelPath(model);
             if (File.Exists(modelPath))
             {
                 ModelStatusText.Text = "✓ Модель установлена";
@@ -98,27 +162,24 @@ namespace LWhisper.UI.WPF.Views
             }
             else
             {
-                ModelStatusText.Text = "✗ Модель не установлена";
+                ModelStatusText.Text = "✗ Модель не установлена — нажмите «Скачать»";
                 ModelStatusText.Foreground = System.Windows.Media.Brushes.Orange;
             }
         }
 
-        private string GetModelPath(string modelSize)
-        {
-            return Path.Combine(LWhisper.UI.WPF.Services.AppPaths.ModelsFolder, $"ggml-{modelSize}.bin");
-        }
-
         private async void DownloadModelButton_Click(object sender, RoutedEventArgs e)
         {
-            var selectedItem = WhisperModelComboBox.SelectedItem as System.Windows.Controls.ComboBoxItem;
+            var selectedItem = WhisperModelListBox.SelectedItem as ModelListItem;
             if (selectedItem == null) return;
 
-            var modelSize = selectedItem.Tag.ToString();
-            var modelPath = GetModelPath(modelSize!);
+            var model = ModelCatalog.GetById(selectedItem.Id);
+            if (model == null) return;
+
+            var modelPath = ModelCatalog.GetModelPath(model);
 
             if (File.Exists(modelPath))
             {
-                var result = MessageBox.Show($"Модель {modelSize} уже установлена. Скачать заново?", 
+                var result = MessageBox.Show($"Модель {model.DisplayName} уже установлена. Скачать заново?",
                     "LWhisper", MessageBoxButton.YesNo, MessageBoxImage.Question);
                 if (result != MessageBoxResult.Yes) return;
             }
@@ -129,10 +190,7 @@ namespace LWhisper.UI.WPF.Views
                 DownloadProgressBar.Visibility = Visibility.Visible;
                 DownloadStatusText.Text = "Скачивание модели...";
 
-                // URL модели на HuggingFace
-                var modelUrl = $"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{modelSize}.bin";
-
-                // Папка уже создана через AppPaths.ModelsFolder
+                var modelUrl = ModelCatalog.GetDownloadUrl(model);
 
                 using (var response = await _httpClient.GetAsync(modelUrl, HttpCompletionOption.ResponseHeadersRead))
                 {
@@ -155,25 +213,27 @@ namespace LWhisper.UI.WPF.Views
                             {
                                 var progress = (double)totalRead / totalBytes * 100;
                                 DownloadProgressBar.Value = progress;
-                                DownloadStatusText.Text = $"Скачано {totalRead / 1024 / 1024} MB из {totalBytes / 1024 / 1024} MB";
+                                DownloadStatusText.Text = $"Скачано {totalRead / 1024 / 1024} МБ из {totalBytes / 1024 / 1024} МБ";
                             }
                         }
                     }
                 }
 
-                Settings.WhisperModelSize = modelSize!;
+                Settings.WhisperModelSize = model.Id;
                 DownloadStatusText.Text = "✓ Модель успешно скачана!";
                 DownloadStatusText.Foreground = System.Windows.Media.Brushes.Green;
-                CheckModelStatus();
 
-                MessageBox.Show("Модель успешно скачана и готова к использованию!", "LWhisper", 
+                // Обновить список — показать индикатор установки
+                PopulateModelList();
+
+                MessageBox.Show("Модель успешно скачана и готова к использованию!", "LWhisper",
                     MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
                 DownloadStatusText.Text = $"✗ Ошибка: {ex.Message}";
                 DownloadStatusText.Foreground = System.Windows.Media.Brushes.Red;
-                MessageBox.Show($"Ошибка скачивания модели: {ex.Message}", "LWhisper", 
+                MessageBox.Show($"Ошибка скачивания модели: {ex.Message}", "LWhisper",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
             finally
@@ -301,15 +361,15 @@ namespace LWhisper.UI.WPF.Views
                     resultColor = "#E67E22";
                 }
 
-                // Update slider (D-04)
+                // Update slider
                 VadAggressivenessSlider.Value = recommended;
 
-                // Show result (D-03)
+                // Show result
                 CalibrationResultText.Foreground = new System.Windows.Media.SolidColorBrush(
                     (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(resultColor));
                 CalibrationResultText.Text = $"Уровень шума: {dBFS:F1} дБ ({noiseLevel}). Рекомендуется: {recommended} — {_aggressivenessLabels[recommended]}";
 
-                // Warning for high noise (D-05)
+                // Warning for high noise
                 if (dBFS > -30)
                 {
                     CalibrationResultText.Text += "\nВысокий уровень шума. Рекомендуем тихое помещение.";
@@ -353,27 +413,27 @@ namespace LWhisper.UI.WPF.Views
             Settings.SelectedAudioDevice = AudioDeviceComboBox.SelectedItem as string;
 
             // Сохранить выбранную модель
-            var selectedItem = WhisperModelComboBox.SelectedItem as System.Windows.Controls.ComboBoxItem;
-            if (selectedItem != null)
+            var selectedModel = WhisperModelListBox.SelectedItem as ModelListItem;
+            if (selectedModel != null)
             {
-                Settings.WhisperModelSize = selectedItem.Tag.ToString()!;
+                Settings.WhisperModelSize = selectedModel.Id;
             }
-            
+
             // Сохранить настройки потокового режима
             if (Settings.Streaming == null)
             {
                 Settings.Streaming = new LWhisper.Core.Models.StreamingSettings();
             }
-            
+
             Settings.Streaming.Enabled = StreamingEnabledCheckBox.IsChecked == true;
-            
+
             if (int.TryParse(PauseThresholdTextBox.Text, out int pauseThreshold))
             {
                 Settings.Streaming.PauseThresholdMs = Math.Max(100, Math.Min(pauseThreshold, 5000));
             }
-            
+
             Settings.Streaming.AutoStopOnLongPause = AutoStopCheckBox.IsChecked == true;
-            
+
             if (int.TryParse(AutoStopPauseTextBox.Text, out int autoStopPause))
             {
                 Settings.Streaming.AutoStopPauseDurationMs = Math.Max(1000, Math.Min(autoStopPause, 10000));

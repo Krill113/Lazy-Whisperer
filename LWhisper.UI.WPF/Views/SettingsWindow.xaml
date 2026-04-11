@@ -55,21 +55,36 @@
 
             <GroupBox Grid.Row="4" Header="Модель Whisper" Margin="0,0,0,10">
                 <StackPanel Margin="10">
-                    <ComboBox x:Name="WhisperModelComboBox" Margin="0,0,0,10">
-                        <ComboBoxItem Content="tiny (~75 MB, быстрая, менее точная)" Tag="tiny"/>
-                        <ComboBoxItem Content="base (~150 MB, средняя скорость)" Tag="base"/>
-                        <ComboBoxItem Content="small (~500 MB, оптимальная)" Tag="small" IsSelected="True"/>
-                        <ComboBoxItem Content="medium (~1.5 GB, точная, медленная)" Tag="medium"/>
-                    </ComboBox>
-                    
+                    <ListBox x:Name="WhisperModelListBox"
+                             MaxHeight="220"
+                             Margin="0,0,0,10"
+                             SelectionChanged="WhisperModelListBox_SelectionChanged">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="4,2">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="13"/>
+                                        <TextBlock Text="{Binding QuantizationBadge}" Foreground="#0078D4" Margin="6,0,0,0" FontSize="11" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                        <TextBlock Text="{Binding SizeText}" Foreground="Gray" FontSize="11"/>
+                                        <TextBlock Text=" | " Foreground="LightGray" FontSize="11"/>
+                                        <TextBlock Text="{Binding RamText}" Foreground="Gray" FontSize="11"/>
+                                        <TextBlock Text="{Binding StatusIndicator}" Margin="8,0,0,0" FontSize="11"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
                     <TextBlock x:Name="ModelStatusText" Text="Модель не установлена" Foreground="Orange" Margin="0,0,0,10"/>
-                    
-                    <Button x:Name="DownloadModelButton" Content="Скачать и применить модель" 
-                            Width="200" HorizontalAlignment="Left" Click="DownloadModelButton_Click"/>
-                    
-                    <ProgressBar x:Name="DownloadProgressBar" Height="20" Margin="0,10,0,0" 
+
+                    <Button x:Name="DownloadModelButton" Content="Скачать и применить модель"
+                            Width="220" HorizontalAlignment="Left" Click="DownloadModelButton_Click"/>
+
+                    <ProgressBar x:Name="DownloadProgressBar" Height="20" Margin="0,10,0,0"
                                  Visibility="Collapsed" Minimum="0" Maximum="100"/>
-                    
+
                     <TextBlock x:Name="DownloadStatusText" Text="" Margin="0,5,0,0" FontSize="11" Foreground="Gray"/>
                 </StackPanel>
             </GroupBox>
