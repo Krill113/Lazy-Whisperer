@@ -51,6 +51,12 @@ namespace LWhisper.Core.Models
         public string WhisperModelSize { get; set; } = "small";
 
         /// <summary>
+        /// Флаг неудачной инициализации GPU (Vulkan).
+        /// При true на следующих запусках Vulkan не пробуется — используется только CPU.
+        /// </summary>
+        public bool GpuFailed { get; set; } = false;
+
+        /// <summary>
         /// Настройки потокового распознавания
         /// </summary>
         public StreamingSettings Streaming { get; set; } = new StreamingSettings();

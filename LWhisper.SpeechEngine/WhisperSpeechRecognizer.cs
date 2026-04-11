@@ -14,15 +14,23 @@ namespace LWhisper.SpeechEngine
         private WhisperProcessor? _processor;
         private readonly string _modelPath;
         private readonly string _language;
+        private readonly bool _gpuFailed;
         private bool _isInitialized;
         private bool _isUsingGpu;
 
         public bool IsReady => _isInitialized;
 
-        public WhisperSpeechRecognizer(string modelPath, string language = "auto")
+        /// <summary>
+        /// True если при текущей инициализации GPU (Vulkan) не удалось загрузиться.
+        /// App.xaml.cs читает это свойство после InitializeAsync() чтобы сохранить флаг в настройках.
+        /// </summary>
+        public bool GpuInitFailed { get; private set; }
+
+        public WhisperSpeechRecognizer(string modelPath, string language = "auto", bool gpuFailed = false)
         {
             _modelPath = modelPath;
             _language = language;
+            _gpuFailed = gpuFailed;
         }
 
         /// <summary>
@@ -36,17 +44,28 @@ namespace LWhisper.SpeechEngine
             {
                 try
                 {
+                    if (_gpuFailed)
+                    {
+                        // PERF-03: GPU ранее не работала — пропускаем Vulkan/CUDA, используем только CPU
+                        Whisper.net.LibraryLoader.RuntimeOptions.RuntimeLibraryOrder =
+                            new List<Whisper.net.LibraryLoader.RuntimeLibrary> { Whisper.net.LibraryLoader.RuntimeLibrary.Cpu };
+                        Log.Information("GPU ранее не инициализировалась — используется только CPU рантайм (RuntimeLibraryOrder=[Cpu])");
+                    }
+
                     var factory = WhisperFactory.FromPath(_modelPath, new WhisperFactoryOptions
                     {
-                        UseGpu = true,
-                        UseFlashAttention = true
+                        UseGpu = !_gpuFailed,
+                        // PERF-05: Flash Attention оптимизирован для GPU; на CPU может замедлять — отключаем
+                        UseFlashAttention = false
                     });
 
                     var builder = factory.CreateBuilder()
                         .WithLanguage(_language)
-                        .WithPrompt("")
+                        // PERF-02: WithPrompt("") убран — пустая строка это не "нет промпта", а промпт с пустой строкой
                         .WithNoContext()
-                        .WithSingleSegment();
+                        .WithSingleSegment()
+                        // PERF-01: использовать все логические ядра CPU вместо дефолтных 4
+                        .WithThreads(Environment.ProcessorCount);
                     builder.WithGreedySamplingStrategy();
                     _processor = builder.Build();
 
@@ -54,7 +73,17 @@ namespace LWhisper.SpeechEngine
                     _isUsingGpu = runtimeInfo != null &&
                         (runtimeInfo.Contains("vulkan", StringComparison.OrdinalIgnoreCase) ||
                          runtimeInfo.Contains("cuda", StringComparison.OrdinalIgnoreCase));
-                    Log.Information("Whisper runtime: {RuntimeInfo}, GPU: {IsGpu}", runtimeInfo ?? "unknown", _isUsingGpu);
+
+                    // PERF-03: Если GPU была запрошена но не загрузилась — пометить для сохранения в настройках
+                    if (!_gpuFailed && !_isUsingGpu)
+                    {
+                        GpuInitFailed = true;
+                        Log.Warning("GPU (Vulkan/CUDA) запрошена но не активна — флаг GpuInitFailed=true. " +
+                            "При следующем запуске будет использован только CPU рантайм");
+                    }
+
+                    Log.Information("Whisper runtime: {RuntimeInfo}, GPU: {IsGpu}, Threads: {Threads}",
+                        runtimeInfo ?? "unknown", _isUsingGpu, Environment.ProcessorCount);
 
                     _isInitialized = true;
                     Log.Information("Whisper язык распознавания: {Language}", _language);
