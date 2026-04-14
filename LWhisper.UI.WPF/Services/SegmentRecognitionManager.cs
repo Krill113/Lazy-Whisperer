@@ -286,8 +286,8 @@ namespace LWhisper.UI.WPF.Services
                 return text;
             }
 
-            // Разбить на предложения (по знакам препинания)
-            var parts = System.Text.RegularExpressions.Regex.Split(text, @"(?<=[.!?])\s+");
+            // Разбить на фразы (по знакам препинания, включая запятые — Whisper часто дублирует через запятую)
+            var parts = System.Text.RegularExpressions.Regex.Split(text, @"(?<=[.!?,;])\s+");
 
             if (parts.Length < 2)
             {
