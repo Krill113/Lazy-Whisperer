@@ -107,9 +107,10 @@ namespace LWhisper.UI.WPF.Services
 
                     if (result.Success && !string.IsNullOrWhiteSpace(result.Text))
                     {
-                        // Очистить текст от маркеров пустого аудио Whisper
+                        // Очистить текст от аннотаций Whisper в скобках
                         var cleanedText = CleanWhisperText(result.Text);
-                        
+                        cleanedText = RemoveIntraSegmentDuplicates(cleanedText);
+
                         if (!string.IsNullOrWhiteSpace(cleanedText))
                         {
                             // Проверить на дубликаты с предыдущими сегментами (Whisper "галлюцинирует")
@@ -145,7 +146,7 @@ namespace LWhisper.UI.WPF.Services
                         }
                         else
                         {
-                            Log.Debug("[Segment #{Id}] Сегмент содержит только [BLANK_AUDIO], игнорируется", segmentId);
+                            Log.Debug("[Segment #{Id}] Сегмент содержит только аннотации, игнорируется", segmentId);
                         }
                     }
                     else
@@ -254,7 +255,7 @@ namespace LWhisper.UI.WPF.Services
         }
 
         /// <summary>
-        /// Очистить текст от маркеров Whisper для пустого аудио
+        /// Очистить текст от аннотаций Whisper в скобках ([...] и (...))
         /// </summary>
         private string CleanWhisperText(string text)
         {
@@ -263,16 +264,58 @@ namespace LWhisper.UI.WPF.Services
                 return string.Empty;
             }
 
-            // Удалить все вариации маркеров пустого аудио
-            text = System.Text.RegularExpressions.Regex.Replace(text, 
-                @"\s*\[BLANK_AUDIO\]\s*|\s*\(blank_audio\)\s*", 
-                " ", 
+            // Удалить любые аннотации в квадратных или круглых скобках ([Стук], (музыка) и т.д.)
+            text = System.Text.RegularExpressions.Regex.Replace(text,
+                @"\s*\[.*?\]\s*|\s*\(.*?\)\s*",
+                " ",
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-            
+
             // Убрать множественные пробелы
             text = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
-            
+
             return text.Trim();
+        }
+
+        /// <summary>
+        /// Удалить повторяющиеся предложения внутри одного сегмента (Whisper галлюцинирует повторы)
+        /// </summary>
+        private string RemoveIntraSegmentDuplicates(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return text;
+            }
+
+            // Разбить на предложения (по знакам препинания)
+            var parts = System.Text.RegularExpressions.Regex.Split(text, @"(?<=[.!?])\s+");
+
+            if (parts.Length < 2)
+            {
+                return text;
+            }
+
+            var seen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var result = new System.Collections.Generic.List<string>();
+
+            foreach (var part in parts)
+            {
+                if (string.IsNullOrWhiteSpace(part)) continue;
+
+                // Нормализовать для сравнения: trim, lower, убрать крайние знаки препинания
+                var normalized = part.Trim().ToLowerInvariant().Trim('.', '!', '?', ',', ' ');
+
+                if (seen.Contains(normalized))
+                {
+                    Log.Debug("Обнаружен внутрисегментный повтор, удалено: \"{Removed}\"", part);
+                }
+                else
+                {
+                    seen.Add(normalized);
+                    result.Add(part);
+                }
+            }
+
+            return string.Join(" ", result);
         }
 
         /// <summary>
