@@ -46,7 +46,6 @@ Models/*.gguf
 # User settings
 *.json
 !appsettings.json
-!.planning/**/*.json
 
 # Logs
 logs/

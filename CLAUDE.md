@@ -68,7 +68,6 @@ All user data lives in `%APPDATA%\LWhisper\`:
 - Event-driven architecture with heavy use of C# events for loose coupling between components.
 - All audio processing uses async/await patterns to keep the WPF UI thread responsive.
 
-<!-- GSD:project-start source:PROJECT.md -->
 ## Project
 
 **LWhisper**
@@ -83,9 +82,7 @@ Desktop Windows-приложение для офлайн голосового в
 - **Tech stack**: C# / .NET 8 / Whisper.net — менять нельзя
 - **Offline**: Все операции локальные, без сети
 - **Model size**: Модели Whisper до ~3GB (large-v3), учитывать место на диске
-<!-- GSD:project-end -->
 
-<!-- GSD:stack-start source:codebase/STACK.md -->
 ## Technology Stack
 
 ## Languages
@@ -143,9 +140,7 @@ Desktop Windows-приложение для офлайн голосового в
 # Debug build
 # Release build (self-contained single file)
 # Debug build
-<!-- GSD:stack-end -->
 
-<!-- GSD:conventions-start source:CONVENTIONS.md -->
 ## Conventions
 
 ## Naming Patterns
@@ -271,9 +266,7 @@ Desktop Windows-приложение для офлайн голосового в
 - Inline gradient brushes: `RadialGradientBrush` in `FloatingMicrophoneWidget.xaml`
 - Dynamic color changes in code-behind via brush assignment
 - Drop shadows and effects defined inline: `<Ellipse.Effect><DropShadowEffect.../></Ellipse.Effect>`
-<!-- GSD:conventions-end -->
 
-<!-- GSD:architecture-start source:ARCHITECTURE.md -->
 ## Architecture
 
 ## Pattern Overview
@@ -366,32 +359,4 @@ Desktop Windows-приложение для офлайн голосового в
 - **Buffer Management:** 30ms buffer interval for VAD (required for accuracy), memory streams freed immediately after StopRecording
 - JSON file at `%APPDATA%\LWhisper\settings.json` managed by `SettingsManager`
 - Persists: recording mode, hotkey binding, auto-insert delay, widget position, audio device ID, Whisper model size, streaming settings
-<!-- GSD:architecture-end -->
-
-<!-- GSD:skills-start source:skills/ -->
-## Project Skills
-
-No project skills found. Add skills to any of: `.claude/skills/`, `.agents/skills/`, `.cursor/skills/`, or `.github/skills/` with a `SKILL.md` index file.
-<!-- GSD:skills-end -->
-
-<!-- GSD:workflow-start source:GSD defaults -->
-## GSD Workflow Enforcement
-
-Before using Edit, Write, or other file-changing tools, start work through a GSD command so planning artifacts and execution context stay in sync.
-
-Use these entry points:
-- `/gsd-quick` for small fixes, doc updates, and ad-hoc tasks
-- `/gsd-debug` for investigation and bug fixing
-- `/gsd-execute-phase` for planned phase work
-
-Do not make direct repo edits outside a GSD workflow unless the user explicitly asks to bypass it.
-<!-- GSD:workflow-end -->
-
-<!-- GSD:profile-start -->
-## Developer Profile
-
-> Profile not yet configured. Run `/gsd-profile-user` to generate your developer profile.
-> This section is managed by `generate-claude-profile` -- do not edit manually.
-<!-- GSD:profile-end -->
-
 <!-- symbiosis-brain v1: scope=lwhisper -->
