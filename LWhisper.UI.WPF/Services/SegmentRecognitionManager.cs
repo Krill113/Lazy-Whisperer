@@ -390,18 +390,23 @@ namespace LWhisper.UI.WPF.Services
         private static string NormalizeForPhraseCompare(string phrase) =>
             phrase.ToLowerInvariant().Trim('.', ',', '!', '?', ';', ' ');
 
-        // Word-level залипание: 3+ одинаковых слова подряд через пробелы.
-        // Whisper иногда зацикливается («подключайся подключайся подключайся») когда не уверен в декодировании.
+        // Word-level залипание: 2+ одинаковых слова подряд через пробелы.
+        // Whisper нередко удваивает значимое слово («запомнить запомнить», «теперь теперь»).
         // RemoveIntraSegmentDuplicates это не ловит — он работает только если между повторами есть знак препинания.
         private static readonly System.Text.RegularExpressions.Regex RepeatedWordsRegex =
             new System.Text.RegularExpressions.Regex(
-                @"\b([\p{L}\p{N}_]+)(?:\s+\1){2,}\b",
+                @"\b([\p{L}\p{N}_]+)(?:\s+\1){1,}\b",
                 System.Text.RegularExpressions.RegexOptions.Compiled |
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
+        // Граница, ниже которой 2 копии могут быть валидной эмфазой («да-да», «не-не», «ой ой»).
+        // Слово ≥ этой длины при 2 копиях считаем залипанием Whisper.
+        private const int MinRepeatedWordLength = 4;
+
         /// <summary>
-        /// Схлопнуть 3+ подряд идущих одинаковых слова в одно (Whisper «залипает» на коротких/нечётких сегментах).
-        /// Дополняет RemoveIntraSegmentDuplicates, который работает только при наличии знаков препинания.
+        /// Схлопнуть подряд идущие одинаковые слова в одно (Whisper «залипает» на коротких/нечётких сегментах).
+        /// Значимые слова (≥4 символов) схлопываются с 2 копий, короткие — только с 3+ копий
+        /// (защита от эмфазных междометий типа «да-да», «ну ну»).
         /// </summary>
         private string CollapseRepeatedWords(string text)
         {
@@ -409,9 +414,17 @@ namespace LWhisper.UI.WPF.Services
 
             return RepeatedWordsRegex.Replace(text, match =>
             {
-                Log.Debug("Обнаружено залипание слова, схлопнуто: \"{Original}\" → \"{Replacement}\"",
-                    match.Value, match.Groups[1].Value);
-                return match.Groups[1].Value;
+                var word = match.Groups[1].Value;
+                var copyCount = match.Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
+
+                // Короткое слово при 2 копиях — возможно эмфаза, не трогаем.
+                // При 3+ копий — однозначное залипание даже для коротких.
+                if (word.Length < MinRepeatedWordLength && copyCount < 3)
+                    return match.Value;
+
+                Log.Debug("Обнаружено залипание слова ({Copies} копий), схлопнуто: \"{Original}\" → \"{Replacement}\"",
+                    copyCount, match.Value, word);
+                return word;
             });
         }
 
