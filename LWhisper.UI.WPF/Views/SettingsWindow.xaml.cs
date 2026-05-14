@@ -272,7 +272,7 @@ namespace LWhisper.UI.WPF.Views
         }
 
         /// <summary>
-        /// Калибровка VAD: запись 3 секунд тишины, вычисление RMS/dBFS, автоподбор aggressiveness
+        /// Калибровка VAD: запись 5 секунд тишины, вычисление RMS/dBFS, автоподбор aggressiveness
         /// </summary>
         private async void CalibrateVadButton_Click(object sender, RoutedEventArgs e)
         {
@@ -303,15 +303,15 @@ namespace LWhisper.UI.WPF.Views
                     for (int i = 0; i + 1 < args.BytesRecorded; i += 2)
                         samples.Add(BitConverter.ToInt16(args.Buffer, i));
 
-                    // 48000 samples = 3 sec at 16kHz
-                    var progress = Math.Min(100.0, samples.Count / 480.0);
+                    // 80000 samples = 5 sec at 16kHz
+                    var progress = Math.Min(100.0, samples.Count / 800.0);
                     Dispatcher.Invoke(() =>
                     {
                         if (CalibrationProgressBar.Visibility == Visibility.Visible)
                             CalibrationProgressBar.Value = progress;
                     });
 
-                    if (samples.Count >= 48000)
+                    if (samples.Count >= 80000)
                     {
                         shouldStop = true;
                         tcs.TrySetResult(true);
@@ -325,8 +325,8 @@ namespace LWhisper.UI.WPF.Views
 
                 waveIn.StartRecording();
 
-                // Wait for completion or 4-second timeout
-                await Task.WhenAny(tcs.Task, Task.Delay(4000));
+                // Wait for completion or 6-second timeout (1 sec safety margin over 5-sec recording)
+                await Task.WhenAny(tcs.Task, Task.Delay(6000));
 
                 shouldStop = true;
                 waveIn.StopRecording();
@@ -346,24 +346,26 @@ namespace LWhisper.UI.WPF.Views
                 double rms = Math.Sqrt(sumSquares / samples.Count);
                 double dBFS = rms > 0 ? 20 * Math.Log10(rms / 32768.0) : -96.0;
 
-                // Map dB to aggressiveness (UI-SPEC algorithm)
+                // Map dB to aggressiveness — пороги сдвинуты на 10 dB вниз чтобы корректно работать
+                // с микрофонными массивами с встроенным DSP (Windows noise suppression / beamforming),
+                // которые режут фон до -55..-65 dBFS даже в обычной комнате.
                 int recommended;
                 string noiseLevel;
                 string resultColor;
 
-                if (dBFS < -50)
+                if (dBFS < -60)
                 {
                     recommended = 0;
-                    noiseLevel = "тихо";
+                    noiseLevel = "очень тихо";
                     resultColor = "#27AE60";
                 }
-                else if (dBFS < -40)
+                else if (dBFS < -50)
                 {
                     recommended = 1;
-                    noiseLevel = "нормально";
+                    noiseLevel = "тихо";
                     resultColor = "#333333";
                 }
-                else if (dBFS < -30)
+                else if (dBFS < -40)
                 {
                     recommended = 2;
                     noiseLevel = "шумно";
@@ -384,8 +386,8 @@ namespace LWhisper.UI.WPF.Views
                     (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(resultColor));
                 CalibrationResultText.Text = $"Уровень шума: {dBFS:F1} дБ ({noiseLevel}). Рекомендуется: {recommended} — {_aggressivenessLabels[recommended]}";
 
-                // Warning for high noise
-                if (dBFS > -30)
+                // Warning for high noise (сдвинуто с -30 до -40 синхронно с новой шкалой)
+                if (dBFS > -40)
                 {
                     CalibrationResultText.Text += "\nВысокий уровень шума. Рекомендуем тихое помещение.";
                 }

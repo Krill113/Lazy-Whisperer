@@ -181,7 +181,7 @@
                                     Content="Калибровка VAD"
                                     Width="140" HorizontalAlignment="Left"
                                     Click="CalibrateVadButton_Click"/>
-                            <TextBlock Text="(3 сек тишины)"
+                            <TextBlock Text="(5 сек тишины)"
                                        FontSize="10" Foreground="Gray"
                                        VerticalAlignment="Center" Margin="8,0,0,0"/>
                         </StackPanel>
