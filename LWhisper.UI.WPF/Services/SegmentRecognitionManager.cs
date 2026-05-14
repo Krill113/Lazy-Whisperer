@@ -109,6 +109,7 @@ namespace LWhisper.UI.WPF.Services
                     {
                         // Очистить текст от аннотаций Whisper в скобках
                         var cleanedText = CleanWhisperText(result.Text);
+                        cleanedText = CollapsePhraseRepeats(cleanedText);
                         cleanedText = CollapseRepeatedWords(cleanedText);
                         cleanedText = RemoveIntraSegmentDuplicates(cleanedText);
 
@@ -333,6 +334,61 @@ namespace LWhisper.UI.WPF.Services
 
             return false;
         }
+
+        // Phrase-level залипание: повтор многословной фразы 2+ раз подряд.
+        // RemoveIntraSegmentDuplicates ловит это только если копии симметрично заканчиваются знаком препинания —
+        // когда копий 3+ и внутри них есть запятая, последняя копия (без trailing запятой) не нормализуется
+        // одинаково с предыдущими и HashSet оставляет дубль.
+        private const int MinPhraseRepeatWords = 3;
+        private const int MinPhraseRepeatChars = 10;
+
+        /// <summary>
+        /// Схлопнуть повторяющиеся подряд фразы из 3+ слов (Whisper «залипает» на длинной фразе).
+        /// Token-based алгоритм с перебором окна от большего к меньшему — не regex, чтобы избежать
+        /// catastrophic backtracking. Работает первым слоем, до word-collapse и phrase-dedup.
+        /// </summary>
+        private string CollapsePhraseRepeats(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return text;
+
+            var tokens = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).ToList();
+            if (tokens.Count < MinPhraseRepeatWords * 2) return text;
+
+            bool modified;
+            do
+            {
+                modified = false;
+                var maxWindow = tokens.Count / 2;
+
+                for (int window = maxWindow; window >= MinPhraseRepeatWords; window--)
+                {
+                    for (int start = 0; start + 2 * window <= tokens.Count; start++)
+                    {
+                        var firstPhrase = string.Join(" ", tokens.GetRange(start, window));
+                        var firstNorm = NormalizeForPhraseCompare(firstPhrase);
+                        if (firstNorm.Length < MinPhraseRepeatChars) continue;
+
+                        var secondPhrase = string.Join(" ", tokens.GetRange(start + window, window));
+                        var secondNorm = NormalizeForPhraseCompare(secondPhrase);
+
+                        if (firstNorm == secondNorm)
+                        {
+                            tokens.RemoveRange(start + window, window);
+                            Log.Debug("Залипание фразы, схлопнуто {Count} слов: \"{Phrase}\"",
+                                window, firstPhrase);
+                            modified = true;
+                            break;
+                        }
+                    }
+                    if (modified) break;
+                }
+            } while (modified);
+
+            return string.Join(" ", tokens);
+        }
+
+        private static string NormalizeForPhraseCompare(string phrase) =>
+            phrase.ToLowerInvariant().Trim('.', ',', '!', '?', ';', ' ');
 
         // Word-level залипание: 3+ одинаковых слова подряд через пробелы.
         // Whisper иногда зацикливается («подключайся подключайся подключайся») когда не уверен в декодировании.
