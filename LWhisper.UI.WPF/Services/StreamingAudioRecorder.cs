@@ -36,6 +36,11 @@ namespace LWhisper.UI.WPF.Services
         public event Action<AudioData>? SegmentReady;
         public event Action<AudioData>? FinalSegmentReady;
         public event Action? RecordingAutoStopped;
+        public event Action? RecorderReady;
+
+        // Флаг чтобы поднять RecorderReady только один раз
+        private bool _recorderReadyRaised;
+        private DateTime _recordingStartTime;
 
         public bool IsRecording => _isRecording;
 
@@ -67,6 +72,8 @@ namespace LWhisper.UI.WPF.Services
             _totalSilenceSinceLastSpeechMs = 0;
             _segmentCounter = 0;
             _silenceBufferBytes = 0;
+            _recorderReadyRaised = false;
+            _recordingStartTime = DateTime.Now;
 
             _waveIn = new WaveInEvent
             {
@@ -85,6 +92,19 @@ namespace LWhisper.UI.WPF.Services
         private void OnDataAvailable(object? sender, WaveInEventArgs e)
         {
             if (!_isRecording || _currentSegmentBuffer == null) return;
+
+            // W0: поднять RecorderReady на первом фрейме (driver реально запустился)
+            if (!_recorderReadyRaised)
+            {
+                _recorderReadyRaised = true;
+                var elapsed = (DateTime.Now - _recordingStartTime).TotalMilliseconds;
+                Log.Debug("[Recorder] Первый фрейм получен через {Elapsed}мс после StartRecording", (int)elapsed);
+                Task.Run(() =>
+                {
+                    try { RecorderReady?.Invoke(); }
+                    catch (Exception ex) { Log.Error(ex, "[Recorder] Ошибка в обработчике RecorderReady"); }
+                });
+            }
 
             // Добавить данные в текущий сегмент
             _currentSegmentBuffer.Write(e.Buffer, 0, e.BytesRecorded);

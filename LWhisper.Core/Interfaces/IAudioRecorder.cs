@@ -49,6 +49,12 @@ namespace LWhisper.Core.Interfaces
         /// Событие автоматической остановки записи (для потокового режима с AutoStop)
         /// </summary>
         event Action? RecordingAutoStopped;
+
+        /// <summary>
+        /// Событие готовности рекордера к захвату (первый фрейм получен от драйвера).
+        /// Поднимается один раз после StartRecording, когда WaveIn реально начал писать в буфер.
+        /// </summary>
+        event Action? RecorderReady;
     }
 }
 

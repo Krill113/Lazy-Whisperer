@@ -21,9 +21,13 @@ namespace LWhisper.UI.WPF.Services
         public bool IsRecording => _isRecording;
         
         // События для потокового режима (не используются в обычном NAudioRecorder)
+#pragma warning disable CS0067 // streaming-only события, NAudioRecorder их не invoke'ает by design
         public event Action<AudioData>? SegmentReady;
         public event Action<AudioData>? FinalSegmentReady;
         public event Action? RecordingAutoStopped;
+#pragma warning restore CS0067
+        public event Action? RecorderReady;
+        private bool _recorderReadyRaised;
 
         public void StartRecording()
         {
@@ -31,6 +35,7 @@ namespace LWhisper.UI.WPF.Services
 
             _isRecording = true;
             _recordedStream = new MemoryStream();
+            _recorderReadyRaised = false;
 
             _waveIn = new WaveInEvent
             {
@@ -101,6 +106,16 @@ namespace LWhisper.UI.WPF.Services
 
         private void OnDataAvailable(object? sender, WaveInEventArgs e)
         {
+            if (!_recorderReadyRaised)
+            {
+                _recorderReadyRaised = true;
+                Serilog.Log.Debug("[Recorder] Первый фрейм получен (traditional режим)");
+                Task.Run(() =>
+                {
+                    try { RecorderReady?.Invoke(); }
+                    catch (Exception ex) { Serilog.Log.Error(ex, "[Recorder] Ошибка в обработчике RecorderReady"); }
+                });
+            }
             _recordedStream?.Write(e.Buffer, 0, e.BytesRecorded);
         }
     }

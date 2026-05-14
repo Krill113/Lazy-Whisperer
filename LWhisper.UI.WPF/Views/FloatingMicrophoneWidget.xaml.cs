@@ -44,6 +44,9 @@ namespace LWhisper.UI.WPF.Views
                     case WidgetState.Idle:
                         SetIdleState();
                         break;
+                    case WidgetState.Initializing:
+                        SetInitializingState();
+                        break;
                     case WidgetState.Recording:
                         SetRecordingState();
                         break;
@@ -60,7 +63,24 @@ namespace LWhisper.UI.WPF.Views
             brush.GradientStops.Add(new GradientStop(Color.FromRgb(74, 144, 226), 0));
             brush.GradientStops.Add(new GradientStop(Color.FromRgb(53, 122, 189), 1));
             MicrophoneButton.Fill = brush;
-            
+
+            // Остановить все анимации
+            MicrophoneButton.BeginAnimation(OpacityProperty, null);
+            if (MicrophoneIcon.RenderTransform is RotateTransform rotateTransform)
+            {
+                rotateTransform.BeginAnimation(RotateTransform.AngleProperty, null);
+            }
+            MicrophoneIcon.RenderTransform = null;
+        }
+
+        private void SetInitializingState()
+        {
+            // W0: жёлтый статический круг (без анимации) — отличает от Processing (с вращением) и Recording (с pulse)
+            var brush = new RadialGradientBrush();
+            brush.GradientStops.Add(new GradientStop(Color.FromRgb(241, 196, 15), 0));
+            brush.GradientStops.Add(new GradientStop(Color.FromRgb(212, 172, 13), 1));
+            MicrophoneButton.Fill = brush;
+
             // Остановить все анимации
             MicrophoneButton.BeginAnimation(OpacityProperty, null);
             if (MicrophoneIcon.RenderTransform is RotateTransform rotateTransform)
@@ -171,6 +191,7 @@ namespace LWhisper.UI.WPF.Views
             {
                 RecordingStopped?.Invoke();
             }
+            // Initializing/Processing — клики игнорируются (юзер ждёт ready)
         }
 
         private void ShowTextButton_MouseEnter(object sender, MouseEventArgs e)
@@ -255,6 +276,7 @@ namespace LWhisper.UI.WPF.Views
     public enum WidgetState
     {
         Idle,
+        Initializing,
         Recording,
         Processing
     }

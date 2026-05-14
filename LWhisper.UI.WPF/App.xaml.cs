@@ -288,7 +288,8 @@ namespace LWhisper.UI.WPF
                     };
                     
                     _audioRecorder = streamingRecorder;
-                    
+                    _audioRecorder.RecorderReady += OnRecorderReady;
+
                     Log.Information("Инициализирован потоковый режим с VAD (агрессивность={Aggressiveness}, пауза={Pause}мс, автостоп={AutoStop})",
                         vadAggressiveness, _settings.Streaming.PauseThresholdMs, _settings.Streaming.AutoStopOnLongPause);
                 }
@@ -296,6 +297,7 @@ namespace LWhisper.UI.WPF
                 {
                     Log.Error(ex, "Ошибка инициализации потокового режима, используется обычный NAudioRecorder");
                     _audioRecorder = new NAudioRecorder();
+                    _audioRecorder.RecorderReady += OnRecorderReady;
                     _useStreamingMode = false;
                 }
             }
@@ -303,6 +305,7 @@ namespace LWhisper.UI.WPF
             {
                 // Обычный режим - весь аудио фрагмент записывается и затем распознается
                 _audioRecorder = new NAudioRecorder();
+                _audioRecorder.RecorderReady += OnRecorderReady;
                 Log.Information("Инициализирован обычный режим записи (потоковый режим отключен)");
             }
         }
@@ -537,7 +540,7 @@ namespace LWhisper.UI.WPF
                 }
 
                 _isRecording = true;
-                _widget?.SetState(WidgetState.Recording);
+                _widget?.SetState(WidgetState.Initializing);
                 _trayManager?.SetIcon(TrayIconState.Recording);
                 
                 // В потоковом режиме сбросить состояние менеджера распознавания
@@ -560,6 +563,26 @@ namespace LWhisper.UI.WPF
                 _widget?.SetState(WidgetState.Idle);
                 _trayManager?.SetIcon(TrayIconState.Idle);
                 MessageBox.Show($"Ошибка записи: {ex.Message}", "LWhisper", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void OnRecorderReady()
+        {
+            // W0: WaveIn реально начал писать → переключаем UI Initializing → Recording
+            try
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (_isRecording)  // защита: вдруг юзер уже остановил до ready
+                    {
+                        _widget?.SetState(WidgetState.Recording);
+                        Log.Debug("Виджет переключён Initializing → Recording (рекордер готов)");
+                    }
+                }));
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Ошибка в OnRecorderReady");
             }
         }
 
