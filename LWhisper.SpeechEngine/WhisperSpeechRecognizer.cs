@@ -20,10 +20,6 @@ namespace LWhisper.SpeechEngine
         private bool _isUsingGpu;
         private readonly StreamingSettings? _settings;
 
-        // W1: типовые YouTube-следы из тренировочного корпуса Whisper (русский)
-        private const string SUPPRESS_REGEX =
-            @"(?i)(субтитры подготовил|субтитры сделал|подписывайтесь на канал|спасибо за просмотр|продолжение следует)";
-
         public bool IsReady => _isInitialized;
 
         /// <summary>
@@ -78,8 +74,7 @@ namespace LWhisper.SpeechEngine
                         .WithEntropyThreshold(2.4f)
                         .WithLogProbThreshold(-1.0f)
                         // Если «да/нет/ок» начинают теряться — снизить до 0.45f
-                        .WithNoSpeechThreshold(0.6f)
-                        .WithSuppressRegex(SUPPRESS_REGEX);
+                        .WithNoSpeechThreshold(0.6f);
 
                     // W1: beam search toggle
                     if (_settings?.UseBeamSearch == true)
@@ -201,13 +196,6 @@ namespace LWhisper.SpeechEngine
                     .WithNoContext()
                     .WithSingleSegment()
                     .WithThreads(Environment.ProcessorCount)
-                    // W1: antigallucination
-                    .WithTemperature(0.0f)
-                    .WithEntropyThreshold(2.4f)
-                    .WithLogProbThreshold(-1.0f)
-                    // Если «да/нет/ок» начинают теряться — снизить до 0.45f
-                    .WithNoSpeechThreshold(0.6f)
-                    .WithSuppressRegex(SUPPRESS_REGEX)
                     // PERF-04 EXPERIMENTAL: уменьшенное контекстное окно для коротких сегментов
                     .WithAudioContextSize(audioContextSize);
 

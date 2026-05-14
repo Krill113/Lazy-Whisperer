@@ -21,7 +21,7 @@ namespace LWhisper.Core.Models
         /// Минимальная длительность сегмента для отправки на распознавание (миллисекунды)
         /// Короткие фрагменты будут игнорироваться как шум
         /// </summary>
-        public int MinSegmentDurationMs { get; set; } = 2200;
+        public int MinSegmentDurationMs { get; set; } = 2000;
 
         /// <summary>
         /// Максимальная длительность сегмента (миллисекунды)
