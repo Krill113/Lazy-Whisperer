@@ -21,7 +21,7 @@ namespace LWhisper.Core.Models
         /// Минимальная длительность сегмента для отправки на распознавание (миллисекунды)
         /// Короткие фрагменты будут игнорироваться как шум
         /// </summary>
-        public int MinSegmentDurationMs { get; set; } = 2000;
+        public int MinSegmentDurationMs { get; set; } = 2200;
 
         /// <summary>
         /// Максимальная длительность сегмента (миллисекунды)
@@ -55,6 +55,12 @@ namespace LWhisper.Core.Models
         /// Устраняет обрезание последних слов фразы. Тишина не включается в аудио сегмента.
         /// </summary>
         public int PostSpeechPaddingMs { get; set; } = 400;
+
+        /// <summary>
+        /// W1: Использовать beam search вместо greedy. Снижает галлюцинации ценой ~1.5-2× времени.
+        /// По дефолту off — скорость важнее, beam включается через UI как опция.
+        /// </summary>
+        public bool UseBeamSearch { get; set; } = false;
     }
 }
 

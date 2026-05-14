@@ -197,6 +197,10 @@
 
                     <TextBlock Text="Рекомендуется: 1500мс для запятых, 3000мс для точек"
                                FontSize="10" Foreground="Gray" Margin="0,10,0,0"/>
+                    <CheckBox x:Name="UseBeamSearchCheckBox"
+                              Content="Высокое качество распознавания (медленнее)"
+                              Margin="0,10,0,0"
+                              ToolTip="Использовать beam search вместо greedy. Точнее, но ~2× медленнее. Применится после Save Settings (несколько секунд на перезагрузку модели Whisper)."/>
                 </StackPanel>
             </GroupBox>
 

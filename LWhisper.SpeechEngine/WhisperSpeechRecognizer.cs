@@ -18,6 +18,11 @@ namespace LWhisper.SpeechEngine
         private readonly bool _gpuFailed;
         private bool _isInitialized;
         private bool _isUsingGpu;
+        private readonly StreamingSettings? _settings;
+
+        // W1: типовые YouTube-следы из тренировочного корпуса Whisper (русский)
+        private const string SUPPRESS_REGEX =
+            @"(?i)(субтитры подготовил|субтитры сделал|подписывайтесь на канал|спасибо за просмотр|продолжение следует)";
 
         public bool IsReady => _isInitialized;
 
@@ -27,11 +32,12 @@ namespace LWhisper.SpeechEngine
         /// </summary>
         public bool GpuInitFailed { get; private set; }
 
-        public WhisperSpeechRecognizer(string modelPath, string language = "auto", bool gpuFailed = false)
+        public WhisperSpeechRecognizer(string modelPath, string language = "auto", bool gpuFailed = false, StreamingSettings? settings = null)
         {
             _modelPath = modelPath;
             _language = language;
             _gpuFailed = gpuFailed;
+            _settings = settings;
         }
 
         /// <summary>
@@ -66,8 +72,27 @@ namespace LWhisper.SpeechEngine
                         .WithNoContext()
                         .WithSingleSegment()
                         // PERF-01: использовать все логические ядра CPU вместо дефолтных 4
-                        .WithThreads(Environment.ProcessorCount);
-                    builder.WithGreedySamplingStrategy();
+                        .WithThreads(Environment.ProcessorCount)
+                        // W1: antigallucination-параметры
+                        .WithTemperature(0.0f)
+                        .WithEntropyThreshold(2.4f)
+                        .WithLogProbThreshold(-1.0f)
+                        // Если «да/нет/ок» начинают теряться — снизить до 0.45f
+                        .WithNoSpeechThreshold(0.6f)
+                        .WithSuppressRegex(SUPPRESS_REGEX);
+
+                    // W1: beam search toggle
+                    if (_settings?.UseBeamSearch == true)
+                    {
+                        if (builder.WithBeamSearchSamplingStrategy() is BeamSearchSamplingStrategyBuilder beamBuilder)
+                            beamBuilder.WithBeamSize(5);
+                        Log.Information("Whisper sampling: BeamSearch(5)");
+                    }
+                    else
+                    {
+                        builder.WithGreedySamplingStrategy();
+                        Log.Information("Whisper sampling: Greedy");
+                    }
                     _processor = builder.Build();
 
                     var runtimeInfo = WhisperFactory.GetRuntimeInfo();
@@ -176,9 +201,28 @@ namespace LWhisper.SpeechEngine
                     .WithNoContext()
                     .WithSingleSegment()
                     .WithThreads(Environment.ProcessorCount)
+                    // W1: antigallucination
+                    .WithTemperature(0.0f)
+                    .WithEntropyThreshold(2.4f)
+                    .WithLogProbThreshold(-1.0f)
+                    // Если «да/нет/ок» начинают теряться — снизить до 0.45f
+                    .WithNoSpeechThreshold(0.6f)
+                    .WithSuppressRegex(SUPPRESS_REGEX)
                     // PERF-04 EXPERIMENTAL: уменьшенное контекстное окно для коротких сегментов
                     .WithAudioContextSize(audioContextSize);
-                streamingBuilder.WithGreedySamplingStrategy();
+
+                if (_settings?.UseBeamSearch == true)
+                {
+                    if (streamingBuilder.WithBeamSearchSamplingStrategy() is BeamSearchSamplingStrategyBuilder beamBuilder)
+                        beamBuilder.WithBeamSize(5);
+                    Log.Debug("Streaming sampling: BeamSearch(5)");
+                }
+                else
+                {
+                    streamingBuilder.WithGreedySamplingStrategy();
+                    Log.Debug("Streaming sampling: Greedy");
+                }
+
                 using var streamingProcessor = streamingBuilder.Build();
 
                 var segments = new List<string>();

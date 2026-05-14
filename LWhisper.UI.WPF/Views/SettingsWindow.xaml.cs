@@ -131,6 +131,7 @@ namespace LWhisper.UI.WPF.Views
             // Загрузить настройки VAD
             VadAggressivenessSlider.Value = Settings.Streaming?.VadAggressiveness ?? 2;
             PostSpeechPaddingSlider.Value = Settings.Streaming?.PostSpeechPaddingMs ?? 400;
+            UseBeamSearchCheckBox.IsChecked = Settings.Streaming?.UseBeamSearch ?? false;
 
             // Выбрать язык распознавания
             foreach (System.Windows.Controls.ComboBoxItem item in LanguageComboBox.Items)
@@ -465,6 +466,7 @@ namespace LWhisper.UI.WPF.Views
 
             Settings.Streaming.VadAggressiveness = Math.Max(0, Math.Min((int)VadAggressivenessSlider.Value, 3));
             Settings.Streaming.PostSpeechPaddingMs = Math.Max(100, Math.Min((int)PostSpeechPaddingSlider.Value, 800));
+            Settings.Streaming.UseBeamSearch = UseBeamSearchCheckBox.IsChecked == true;
 
             SettingsAccepted = true;
             try { DialogResult = true; } catch (System.InvalidOperationException) { }

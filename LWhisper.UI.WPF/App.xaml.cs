@@ -152,7 +152,7 @@ namespace LWhisper.UI.WPF
             {
                 try
                 {
-                    var whisperRecognizer = new LWhisper.SpeechEngine.WhisperSpeechRecognizer(modelPath, _settings.RecognitionLanguage, _settings.GpuFailed);
+                    var whisperRecognizer = new LWhisper.SpeechEngine.WhisperSpeechRecognizer(modelPath, _settings.RecognitionLanguage, _settings.GpuFailed, _settings.Streaming);
 
                     // ВАЖНО: Инициализировать асинхронно
                     Task.Run(async () =>
@@ -236,10 +236,15 @@ namespace LWhisper.UI.WPF
                     var streamingRecorder = new StreamingAudioRecorder(_vad, _settings.Streaming);
                     
                     // Создать менеджер распознавания сегментов
+                    // W1: adaptive parallelism — на CPU клиппим до 2, на GPU респектим юзерское значение
+                    int parallelism = _settings.GpuFailed
+                        ? Math.Min(2, _settings.Streaming.MaxParallelRecognitions)
+                        : _settings.Streaming.MaxParallelRecognitions;
                     _recognitionManager = new SegmentRecognitionManager(
-                        _speechRecognizer, 
-                        _settings.Streaming.MaxParallelRecognitions
+                        _speechRecognizer,
+                        parallelism
                     );
+                    Log.Information("Параллелизм распознавания: {Parallel} (GpuFailed={GpuFailed})", parallelism, _settings.GpuFailed);
                     
                     // Подписаться на события промежуточных сегментов
                     streamingRecorder.SegmentReady += async (audioData) =>
