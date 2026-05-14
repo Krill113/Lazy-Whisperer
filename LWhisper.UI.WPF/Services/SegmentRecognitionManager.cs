@@ -109,6 +109,7 @@ namespace LWhisper.UI.WPF.Services
                     {
                         // Очистить текст от аннотаций Whisper в скобках
                         var cleanedText = CleanWhisperText(result.Text);
+                        cleanedText = CollapseRepeatedWords(cleanedText);
                         cleanedText = RemoveIntraSegmentDuplicates(cleanedText);
 
                         if (!string.IsNullOrWhiteSpace(cleanedText))
@@ -331,6 +332,31 @@ namespace LWhisper.UI.WPF.Services
             }
 
             return false;
+        }
+
+        // Word-level залипание: 3+ одинаковых слова подряд через пробелы.
+        // Whisper иногда зацикливается («подключайся подключайся подключайся») когда не уверен в декодировании.
+        // RemoveIntraSegmentDuplicates это не ловит — он работает только если между повторами есть знак препинания.
+        private static readonly System.Text.RegularExpressions.Regex RepeatedWordsRegex =
+            new System.Text.RegularExpressions.Regex(
+                @"\b([\p{L}\p{N}_]+)(?:\s+\1){2,}\b",
+                System.Text.RegularExpressions.RegexOptions.Compiled |
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        /// <summary>
+        /// Схлопнуть 3+ подряд идущих одинаковых слова в одно (Whisper «залипает» на коротких/нечётких сегментах).
+        /// Дополняет RemoveIntraSegmentDuplicates, который работает только при наличии знаков препинания.
+        /// </summary>
+        private string CollapseRepeatedWords(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return text;
+
+            return RepeatedWordsRegex.Replace(text, match =>
+            {
+                Log.Debug("Обнаружено залипание слова, схлопнуто: \"{Original}\" → \"{Replacement}\"",
+                    match.Value, match.Groups[1].Value);
+                return match.Groups[1].Value;
+            });
         }
 
         /// <summary>
