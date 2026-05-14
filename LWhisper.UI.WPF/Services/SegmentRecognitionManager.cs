@@ -113,6 +113,15 @@ namespace LWhisper.UI.WPF.Services
 
                         if (!string.IsNullOrWhiteSpace(cleanedText))
                         {
+                            // Фильтр известных галлюцинаций Whisper (YouTube-боилерплейт).
+                            // Выбрасывается на коротких/тихих сегментах с пиком амплитуды выше порога.
+                            if (IsKnownHallucination(cleanedText))
+                            {
+                                Log.Information("[Segment #{Id}] Известная галлюцинация Whisper отфильтрована: \"{Text}\"",
+                                    segmentId, cleanedText);
+                                return new RecognitionResult { Success = true, Text = string.Empty };
+                            }
+
                             // Проверить на дубликаты с предыдущими сегментами (Whisper "галлюцинирует")
                             var previousText = GetPreviousSegmentsText();
                             var uniqueText = RemoveDuplicatePrefix(cleanedText, previousText);
@@ -274,6 +283,54 @@ namespace LWhisper.UI.WPF.Services
             text = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
 
             return text.Trim();
+        }
+
+        // Известные галлюцинации Whisper из YouTube-corpus.
+        // Substrings — уверенные бренд-маркеры, ловятся в любом месте сегмента.
+        private static readonly string[] HallucinationSubstrings = new[]
+        {
+            "DimaTorzok",
+            "Субтитры создавал",
+            "Субтитры подготовил",
+            "Субтитры сделал",
+            "Субтитры выполнил",
+            "Корректор субтитров",
+            "Подписывайтесь на канал",
+            "Like and subscribe",
+        };
+
+        // Full-match — общие фразы, фильтруются только если сегмент состоит ровно из них.
+        // Защищает реальную речь («спасибо за просмотр кода») от ложного срабатывания.
+        private static readonly string[] HallucinationFullMatches = new[]
+        {
+            "Спасибо за просмотр",
+            "Продолжение следует",
+            "Спасибо за внимание",
+            "Thanks for watching",
+        };
+
+        /// <summary>
+        /// Проверка текста на известные галлюцинации Whisper (YouTube-боилерплейт из training corpus).
+        /// Срабатывает на коротких/тихих сегментах, где модель додумывает текст из памяти.
+        /// </summary>
+        private static bool IsKnownHallucination(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return false;
+
+            foreach (var marker in HallucinationSubstrings)
+            {
+                if (text.Contains(marker, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            var trimmed = text.Trim().TrimEnd('.', '!', '?', ',', ';', ' ');
+            foreach (var phrase in HallucinationFullMatches)
+            {
+                if (string.Equals(trimmed, phrase, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
         }
 
         /// <summary>
