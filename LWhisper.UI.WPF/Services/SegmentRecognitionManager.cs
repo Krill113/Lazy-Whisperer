@@ -373,7 +373,9 @@ namespace LWhisper.UI.WPF.Services
         // RemoveIntraSegmentDuplicates ловит это только если копии симметрично заканчиваются знаком препинания —
         // когда копий 3+ и внутри них есть запятая, последняя копия (без trailing запятой) не нормализуется
         // одинаково с предыдущими и HashSet оставляет дубль.
-        private const int MinPhraseRepeatWords = 3;
+        // 2-словные фразы покрыты — защита от валидных коротких повторов («да да») обеспечивается MinPhraseRepeatChars=10.
+        // С порогом 3 была дыра: «сейчас тоже сейчас тоже» не схлопывалось (Whisper-залип на 2-словной фразе).
+        private const int MinPhraseRepeatWords = 2;
         private const int MinPhraseRepeatChars = 10;
 
         /// <summary>
