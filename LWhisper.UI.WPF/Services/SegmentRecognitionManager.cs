@@ -335,7 +335,8 @@ namespace LWhisper.UI.WPF.Services
             if (rawBytes.Length < 32) return 1.0;  // короткий текст compression-ratio ненадёжен
 
             using var ms = new System.IO.MemoryStream();
-            using (var gz = new System.IO.Compression.GZipStream(ms, System.IO.Compression.CompressionLevel.Optimal))
+            // leaveOpen: true — GZipStream.Dispose() закрыл бы ms по умолчанию, ms.Length бросил бы ObjectDisposedException
+            using (var gz = new System.IO.Compression.GZipStream(ms, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
             {
                 gz.Write(rawBytes, 0, rawBytes.Length);
             }
