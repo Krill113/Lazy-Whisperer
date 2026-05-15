@@ -31,6 +31,9 @@ namespace LWhisper.UI.WPF.Services
         private int _totalSilenceSinceLastSpeechMs = 0; // Для автостопа
         private int _segmentCounter = 0;
         private int _silenceBufferBytes = 0;
+        // Hysteresis: накапливаем подряд speech-кадры для устойчивого триггера
+        private int _consecutiveSpeechFrames = 0;
+        private bool _speechActive = false; // True после успешного hysteresis-триггера
 
         // События для потокового режима
         public event Action<AudioData>? SegmentReady;
@@ -72,6 +75,8 @@ namespace LWhisper.UI.WPF.Services
             _totalSilenceSinceLastSpeechMs = 0;
             _segmentCounter = 0;
             _silenceBufferBytes = 0;
+            _consecutiveSpeechFrames = 0;
+            _speechActive = false;
             _recorderReadyRaised = false;
             _recordingStartTime = DateTime.Now;
 
@@ -125,7 +130,27 @@ namespace LWhisper.UI.WPF.Services
 
             bool isSpeech = _vad.IsSpeech(frameData, _sampleRate);
 
+            // Hysteresis VAD: фрейм считается реальной речью только после N подряд speech-кадров.
+            // До триггера — даже если VAD сказал «speech», обрабатываем как silence.
+            bool effectiveSpeech;
             if (isSpeech)
+            {
+                _consecutiveSpeechFrames++;
+                if (!_speechActive && _consecutiveSpeechFrames >= _settings.SpeechTriggerFrames)
+                {
+                    _speechActive = true;
+                    Log.Debug("[VAD] Hysteresis trigger: {Frames} подряд speech-кадров → speech_active=true",
+                        _consecutiveSpeechFrames);
+                }
+                effectiveSpeech = _speechActive;
+            }
+            else
+            {
+                _consecutiveSpeechFrames = 0;
+                effectiveSpeech = false;
+            }
+
+            if (effectiveSpeech)
             {
                 // Речь обнаружена - сбросить счётчики тишины
                 _lastSpeechTime = DateTime.Now;
@@ -135,7 +160,7 @@ namespace LWhisper.UI.WPF.Services
             }
             else
             {
-                // Тишина - увеличить счётчики
+                // Тишина (или speech до hysteresis-триггера) - увеличить счётчики
                 _silenceBufferBytes += e.BytesRecorded;
                 _consecutiveSilenceMs += 30; // BufferMilliseconds = 30
                 _totalSilenceSinceLastSpeechMs += 30;
@@ -280,6 +305,8 @@ namespace LWhisper.UI.WPF.Services
                 _currentSegmentBuffer = new MemoryStream();
                 _consecutiveSilenceMs = 0;
                 _silenceBufferBytes = 0;
+                _consecutiveSpeechFrames = 0;
+                _speechActive = false;
             }
         }
 
