@@ -35,6 +35,11 @@ namespace LWhisper.UI.WPF.Services
         private int _consecutiveSpeechFrames = 0;
         private bool _speechActive = false; // True после успешного hysteresis-триггера
 
+        // Pre-roll: кольцевой буфер аудио до VAD-триггера, прицепляется к началу сегмента.
+        // Лечит «потерю первого слова», когда VAD триггерится после начала речи.
+        private readonly Queue<byte[]> _preRollBuffer = new Queue<byte[]>();
+        private int _preRollBufferBytes = 0;
+
         // События для потокового режима
         public event Action<AudioData>? SegmentReady;
         public event Action<AudioData>? FinalSegmentReady;
@@ -77,6 +82,8 @@ namespace LWhisper.UI.WPF.Services
             _silenceBufferBytes = 0;
             _consecutiveSpeechFrames = 0;
             _speechActive = false;
+            _preRollBuffer.Clear();
+            _preRollBufferBytes = 0;
             _recorderReadyRaised = false;
             _recordingStartTime = DateTime.Now;
 
@@ -111,8 +118,44 @@ namespace LWhisper.UI.WPF.Services
                 });
             }
 
-            // Добавить данные в текущий сегмент
-            _currentSegmentBuffer.Write(e.Buffer, 0, e.BytesRecorded);
+            // Pre-roll: до hysteresis-триггера накапливаем аудио в кольцевой очереди,
+            // не пишем в основной сегмент. После триггера сначала высыпем pre-roll, потом текущий фрейм.
+            int preRollMaxBytes = _settings.PreRollBufferMs * (_sampleRate * _channels * _bitsPerSample / 8 / 1000);
+            byte[] frameCopy = new byte[e.BytesRecorded];
+            Array.Copy(e.Buffer, frameCopy, e.BytesRecorded);
+
+            if (!_speechActive && _currentSegmentBuffer.Length == 0)
+            {
+                // Накапливаем в pre-roll очередь, сбрасываем старые кадры
+                _preRollBuffer.Enqueue(frameCopy);
+                _preRollBufferBytes += frameCopy.Length;
+                while (_preRollBufferBytes > preRollMaxBytes && _preRollBuffer.Count > 0)
+                {
+                    var dropped = _preRollBuffer.Dequeue();
+                    _preRollBufferBytes -= dropped.Length;
+                }
+            }
+            else if (_speechActive && _currentSegmentBuffer.Length == 0 && _preRollBuffer.Count > 0)
+            {
+                // Первый speech-кадр после hysteresis-триггера: высыпем pre-roll в начало сегмента
+                int dumped = 0;
+                while (_preRollBuffer.Count > 0)
+                {
+                    var preFrame = _preRollBuffer.Dequeue();
+                    _currentSegmentBuffer.Write(preFrame, 0, preFrame.Length);
+                    dumped += preFrame.Length;
+                }
+                _preRollBufferBytes = 0;
+                Log.Debug("[Pre-roll] Высыпано {Bytes} байт ({Ms} мс) перед началом сегмента",
+                    dumped, dumped / (_sampleRate * _channels * _bitsPerSample / 8 / 1000));
+                // Текущий фрейм
+                _currentSegmentBuffer.Write(e.Buffer, 0, e.BytesRecorded);
+            }
+            else
+            {
+                // Обычное поведение — сегмент уже активен, просто пишем
+                _currentSegmentBuffer.Write(e.Buffer, 0, e.BytesRecorded);
+            }
 
             // Принудительная нарезка при превышении максимальной длительности (независимо от VAD)
             var currentDuration = GetSegmentDurationMs();
@@ -307,6 +350,8 @@ namespace LWhisper.UI.WPF.Services
                 _silenceBufferBytes = 0;
                 _consecutiveSpeechFrames = 0;
                 _speechActive = false;
+                _preRollBuffer.Clear();
+                _preRollBufferBytes = 0;
             }
         }
 
