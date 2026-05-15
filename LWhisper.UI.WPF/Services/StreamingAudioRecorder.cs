@@ -232,11 +232,19 @@ namespace LWhisper.UI.WPF.Services
                     return;
                 }
 
-                // Обрезать тишину из конца сегмента (D-08)
+                // Обрезать тишину из конца сегмента, но оставить EndSilenceKeepMs мс хвоста
+                // — Whisper использует хвостовую тишину как маркер «конец фразы» и не рубит последнее слово.
                 if (_silenceBufferBytes > 0 && _currentSegmentBuffer.Length > _silenceBufferBytes)
                 {
-                    _currentSegmentBuffer.SetLength(_currentSegmentBuffer.Length - _silenceBufferBytes);
-                    Log.Debug("[Segment] Обрезано {SilenceBytes} байт тишины из конца сегмента", _silenceBufferBytes);
+                    int bytesPerMs = _sampleRate * _channels * _bitsPerSample / 8 / 1000; // 32 байта/мс
+                    int keepBytes = Math.Min(_settings.EndSilenceKeepMs * bytesPerMs, _silenceBufferBytes);
+                    int trimBytes = _silenceBufferBytes - keepBytes;
+                    if (trimBytes > 0)
+                    {
+                        _currentSegmentBuffer.SetLength(_currentSegmentBuffer.Length - trimBytes);
+                        Log.Debug("[Segment] Обрезано {Trim} байт тишины, оставлено {Keep} байт хвоста ({KeepMs} мс)",
+                            trimBytes, keepBytes, _settings.EndSilenceKeepMs);
+                    }
                 }
 
                 // Пересчитать длительность после обрезки тишины
