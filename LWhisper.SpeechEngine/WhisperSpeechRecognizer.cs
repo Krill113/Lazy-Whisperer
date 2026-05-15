@@ -19,6 +19,7 @@ namespace LWhisper.SpeechEngine
         private bool _isInitialized;
         private bool _isUsingGpu;
         private readonly StreamingSettings? _settings;
+        private readonly string? _initialPrompt;
 
         public bool IsReady => _isInitialized;
 
@@ -28,12 +29,13 @@ namespace LWhisper.SpeechEngine
         /// </summary>
         public bool GpuInitFailed { get; private set; }
 
-        public WhisperSpeechRecognizer(string modelPath, string language = "auto", bool gpuFailed = false, StreamingSettings? settings = null)
+        public WhisperSpeechRecognizer(string modelPath, string language = "auto", bool gpuFailed = false, StreamingSettings? settings = null, string? initialPrompt = null)
         {
             _modelPath = modelPath;
             _language = language;
             _gpuFailed = gpuFailed;
             _settings = settings;
+            _initialPrompt = string.IsNullOrWhiteSpace(initialPrompt) ? null : initialPrompt;
         }
 
         /// <summary>
@@ -75,6 +77,13 @@ namespace LWhisper.SpeechEngine
                         .WithLogProbThreshold(-1.0f)
                         // Если «да/нет/ок» начинают теряться — снизить до 0.45f
                         .WithNoSpeechThreshold(0.6f);
+
+                    // D5: vocabulary через WithPrompt — биас Whisper на доменную лексику
+                    if (_initialPrompt != null)
+                    {
+                        builder = builder.WithPrompt(_initialPrompt);
+                        Log.Information("Whisper prompt активен: {Length} символов", _initialPrompt.Length);
+                    }
 
                     // W1: beam search toggle
                     if (_settings?.UseBeamSearch == true)
@@ -198,6 +207,12 @@ namespace LWhisper.SpeechEngine
                     .WithThreads(Environment.ProcessorCount)
                     // PERF-04 EXPERIMENTAL: уменьшенное контекстное окно для коротких сегментов
                     .WithAudioContextSize(audioContextSize);
+
+                // D5: vocabulary через WithPrompt — биас Whisper на доменную лексику
+                if (_initialPrompt != null)
+                {
+                    streamingBuilder = streamingBuilder.WithPrompt(_initialPrompt);
+                }
 
                 if (_settings?.UseBeamSearch == true)
                 {

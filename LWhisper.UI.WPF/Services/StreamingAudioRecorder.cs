@@ -31,6 +31,14 @@ namespace LWhisper.UI.WPF.Services
         private int _totalSilenceSinceLastSpeechMs = 0; // Для автостопа
         private int _segmentCounter = 0;
         private int _silenceBufferBytes = 0;
+        // Hysteresis: накапливаем подряд speech-кадры для устойчивого триггера
+        private int _consecutiveSpeechFrames = 0;
+        private bool _speechActive = false; // True после успешного hysteresis-триггера
+
+        // Pre-roll: кольцевой буфер аудио до VAD-триггера, прицепляется к началу сегмента.
+        // Лечит «потерю первого слова», когда VAD триггерится после начала речи.
+        private readonly Queue<byte[]> _preRollBuffer = new Queue<byte[]>();
+        private int _preRollBufferBytes = 0;
 
         // События для потокового режима
         public event Action<AudioData>? SegmentReady;
@@ -72,6 +80,10 @@ namespace LWhisper.UI.WPF.Services
             _totalSilenceSinceLastSpeechMs = 0;
             _segmentCounter = 0;
             _silenceBufferBytes = 0;
+            _consecutiveSpeechFrames = 0;
+            _speechActive = false;
+            _preRollBuffer.Clear();
+            _preRollBufferBytes = 0;
             _recorderReadyRaised = false;
             _recordingStartTime = DateTime.Now;
 
@@ -106,8 +118,44 @@ namespace LWhisper.UI.WPF.Services
                 });
             }
 
-            // Добавить данные в текущий сегмент
-            _currentSegmentBuffer.Write(e.Buffer, 0, e.BytesRecorded);
+            // Pre-roll: до hysteresis-триггера накапливаем аудио в кольцевой очереди,
+            // не пишем в основной сегмент. После триггера сначала высыпем pre-roll, потом текущий фрейм.
+            int preRollMaxBytes = _settings.PreRollBufferMs * (_sampleRate * _channels * _bitsPerSample / 8 / 1000);
+            byte[] frameCopy = new byte[e.BytesRecorded];
+            Array.Copy(e.Buffer, frameCopy, e.BytesRecorded);
+
+            if (!_speechActive && _currentSegmentBuffer.Length == 0)
+            {
+                // Накапливаем в pre-roll очередь, сбрасываем старые кадры
+                _preRollBuffer.Enqueue(frameCopy);
+                _preRollBufferBytes += frameCopy.Length;
+                while (_preRollBufferBytes > preRollMaxBytes && _preRollBuffer.Count > 0)
+                {
+                    var dropped = _preRollBuffer.Dequeue();
+                    _preRollBufferBytes -= dropped.Length;
+                }
+            }
+            else if (_speechActive && _currentSegmentBuffer.Length == 0 && _preRollBuffer.Count > 0)
+            {
+                // Первый speech-кадр после hysteresis-триггера: высыпем pre-roll в начало сегмента
+                int dumped = 0;
+                while (_preRollBuffer.Count > 0)
+                {
+                    var preFrame = _preRollBuffer.Dequeue();
+                    _currentSegmentBuffer.Write(preFrame, 0, preFrame.Length);
+                    dumped += preFrame.Length;
+                }
+                _preRollBufferBytes = 0;
+                Log.Debug("[Pre-roll] Высыпано {Bytes} байт ({Ms} мс) перед началом сегмента",
+                    dumped, dumped / (_sampleRate * _channels * _bitsPerSample / 8 / 1000));
+                // Текущий фрейм
+                _currentSegmentBuffer.Write(e.Buffer, 0, e.BytesRecorded);
+            }
+            else
+            {
+                // Обычное поведение — сегмент уже активен, просто пишем
+                _currentSegmentBuffer.Write(e.Buffer, 0, e.BytesRecorded);
+            }
 
             // Принудительная нарезка при превышении максимальной длительности (независимо от VAD)
             var currentDuration = GetSegmentDurationMs();
@@ -125,7 +173,27 @@ namespace LWhisper.UI.WPF.Services
 
             bool isSpeech = _vad.IsSpeech(frameData, _sampleRate);
 
+            // Hysteresis VAD: фрейм считается реальной речью только после N подряд speech-кадров.
+            // До триггера — даже если VAD сказал «speech», обрабатываем как silence.
+            bool effectiveSpeech;
             if (isSpeech)
+            {
+                _consecutiveSpeechFrames++;
+                if (!_speechActive && _consecutiveSpeechFrames >= _settings.SpeechTriggerFrames)
+                {
+                    _speechActive = true;
+                    Log.Debug("[VAD] Hysteresis trigger: {Frames} подряд speech-кадров → speech_active=true",
+                        _consecutiveSpeechFrames);
+                }
+                effectiveSpeech = _speechActive;
+            }
+            else
+            {
+                _consecutiveSpeechFrames = 0;
+                effectiveSpeech = false;
+            }
+
+            if (effectiveSpeech)
             {
                 // Речь обнаружена - сбросить счётчики тишины
                 _lastSpeechTime = DateTime.Now;
@@ -135,7 +203,7 @@ namespace LWhisper.UI.WPF.Services
             }
             else
             {
-                // Тишина - увеличить счётчики
+                // Тишина (или speech до hysteresis-триггера) - увеличить счётчики
                 _silenceBufferBytes += e.BytesRecorded;
                 _consecutiveSilenceMs += 30; // BufferMilliseconds = 30
                 _totalSilenceSinceLastSpeechMs += 30;
@@ -232,11 +300,19 @@ namespace LWhisper.UI.WPF.Services
                     return;
                 }
 
-                // Обрезать тишину из конца сегмента (D-08)
+                // Обрезать тишину из конца сегмента, но оставить EndSilenceKeepMs мс хвоста
+                // — Whisper использует хвостовую тишину как маркер «конец фразы» и не рубит последнее слово.
                 if (_silenceBufferBytes > 0 && _currentSegmentBuffer.Length > _silenceBufferBytes)
                 {
-                    _currentSegmentBuffer.SetLength(_currentSegmentBuffer.Length - _silenceBufferBytes);
-                    Log.Debug("[Segment] Обрезано {SilenceBytes} байт тишины из конца сегмента", _silenceBufferBytes);
+                    int bytesPerMs = _sampleRate * _channels * _bitsPerSample / 8 / 1000; // 32 байта/мс
+                    int keepBytes = Math.Min(_settings.EndSilenceKeepMs * bytesPerMs, _silenceBufferBytes);
+                    int trimBytes = _silenceBufferBytes - keepBytes;
+                    if (trimBytes > 0)
+                    {
+                        _currentSegmentBuffer.SetLength(_currentSegmentBuffer.Length - trimBytes);
+                        Log.Debug("[Segment] Обрезано {Trim} байт тишины, оставлено {Keep} байт хвоста ({KeepMs} мс)",
+                            trimBytes, keepBytes, _settings.EndSilenceKeepMs);
+                    }
                 }
 
                 // Пересчитать длительность после обрезки тишины
@@ -272,6 +348,10 @@ namespace LWhisper.UI.WPF.Services
                 _currentSegmentBuffer = new MemoryStream();
                 _consecutiveSilenceMs = 0;
                 _silenceBufferBytes = 0;
+                _consecutiveSpeechFrames = 0;
+                _speechActive = false;
+                _preRollBuffer.Clear();
+                _preRollBufferBytes = 0;
             }
         }
 

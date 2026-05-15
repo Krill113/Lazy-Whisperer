@@ -109,6 +109,7 @@ namespace LWhisper.UI.WPF.Services
                     {
                         // Очистить текст от аннотаций Whisper в скобках
                         var cleanedText = CleanWhisperText(result.Text);
+
                         cleanedText = CollapsePhraseRepeats(cleanedText);
                         cleanedText = CollapseRepeatedWords(cleanedText);
                         cleanedText = RemoveIntraSegmentDuplicates(cleanedText);
@@ -121,6 +122,18 @@ namespace LWhisper.UI.WPF.Services
                             {
                                 Log.Information("[Segment #{Id}] Известная галлюцинация Whisper отфильтрована: \"{Text}\"",
                                     segmentId, cleanedText);
+                                return new RecognitionResult { Success = true, Text = string.Empty };
+                            }
+
+                            // D6: compression-ratio detector — safety net ПОСЛЕ dedup'ов.
+                            // Простые повторы должны быть схлопнуты выше (CollapsePhraseRepeats/RemoveIntraSegmentDuplicates).
+                            // Если ratio всё ещё высокий — это дикая галлюцинация, которую не вытащили regex'ы → дроп.
+                            const double CompressionThreshold = 2.4;  // дефолт OpenAI Whisper
+                            var compressionRatio = GetCompressionRatio(cleanedText);
+                            if (compressionRatio >= CompressionThreshold)
+                            {
+                                Log.Information("[Segment #{Id}] Высокий compression-ratio {Ratio:F2} ≥ {Threshold:F1} после dedup'ов, дроп сегмента: \"{Text}\"",
+                                    segmentId, compressionRatio, CompressionThreshold, cleanedText.Length > 100 ? cleanedText.Substring(0, 100) + "..." : cleanedText);
                                 return new RecognitionResult { Success = true, Text = string.Empty };
                             }
 
@@ -312,6 +325,27 @@ namespace LWhisper.UI.WPF.Services
         };
 
         /// <summary>
+        /// Compression-ratio detector: соотношение длины текста к длине его gzip-сжатого варианта.
+        /// Большой ratio (≥ CompressionRatioThreshold, дефолт 2.4) означает сильно повторяющийся текст —
+        /// типичный признак Whisper-галлюцинации. Универсальная защита поверх regex/HashSet dedup'ов.
+        /// </summary>
+        private static double GetCompressionRatio(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return 1.0;
+            var rawBytes = System.Text.Encoding.UTF8.GetBytes(text);
+            if (rawBytes.Length < 32) return 1.0;  // короткий текст compression-ratio ненадёжен
+
+            using var ms = new System.IO.MemoryStream();
+            // leaveOpen: true — GZipStream.Dispose() закрыл бы ms по умолчанию, ms.Length бросил бы ObjectDisposedException
+            using (var gz = new System.IO.Compression.GZipStream(ms, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+            {
+                gz.Write(rawBytes, 0, rawBytes.Length);
+            }
+            var compressedLength = ms.Length;
+            return compressedLength > 0 ? (double)rawBytes.Length / compressedLength : 1.0;
+        }
+
+        /// <summary>
         /// Проверка текста на известные галлюцинации Whisper (YouTube-боилерплейт из training corpus).
         /// Срабатывает на коротких/тихих сегментах, где модель додумывает текст из памяти.
         /// </summary>
@@ -339,7 +373,9 @@ namespace LWhisper.UI.WPF.Services
         // RemoveIntraSegmentDuplicates ловит это только если копии симметрично заканчиваются знаком препинания —
         // когда копий 3+ и внутри них есть запятая, последняя копия (без trailing запятой) не нормализуется
         // одинаково с предыдущими и HashSet оставляет дубль.
-        private const int MinPhraseRepeatWords = 3;
+        // 2-словные фразы покрыты — защита от валидных коротких повторов («да да») обеспечивается MinPhraseRepeatChars=10.
+        // С порогом 3 была дыра: «сейчас тоже сейчас тоже» не схлопывалось (Whisper-залип на 2-словной фразе).
+        private const int MinPhraseRepeatWords = 2;
         private const int MinPhraseRepeatChars = 10;
 
         /// <summary>
