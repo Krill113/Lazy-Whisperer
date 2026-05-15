@@ -152,7 +152,33 @@ namespace LWhisper.UI.WPF
             {
                 try
                 {
-                    var whisperRecognizer = new LWhisper.SpeechEngine.WhisperSpeechRecognizer(modelPath, _settings.RecognitionLanguage, _settings.GpuFailed, _settings.Streaming);
+                    // D5: загрузить опциональный словарь часто-перевираемых слов из %APPDATA%\LWhisper\vocabulary.txt
+                    string? vocabularyPrompt = null;
+                    try
+                    {
+                        var appDataPath = Path.Combine(
+                            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                            "LWhisper");
+                        var vocabularyFilePath = Path.Combine(appDataPath, "vocabulary.txt");
+                        if (File.Exists(vocabularyFilePath))
+                        {
+                            var lines = File.ReadAllLines(vocabularyFilePath, System.Text.Encoding.UTF8)
+                                .Where(l => !string.IsNullOrWhiteSpace(l) && !l.TrimStart().StartsWith("#"))
+                                .Select(l => l.Trim())
+                                .ToArray();
+                            if (lines.Length > 0)
+                            {
+                                vocabularyPrompt = string.Join(", ", lines);
+                                Log.Information("Загружен vocabulary.txt: {Count} слов", lines.Length);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning(ex, "Не удалось прочитать vocabulary.txt — продолжаем без prompt");
+                    }
+
+                    var whisperRecognizer = new LWhisper.SpeechEngine.WhisperSpeechRecognizer(modelPath, _settings.RecognitionLanguage, _settings.GpuFailed, _settings.Streaming, vocabularyPrompt);
 
                     // ВАЖНО: Инициализировать асинхронно
                     Task.Run(async () =>
