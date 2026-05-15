@@ -109,6 +109,18 @@ namespace LWhisper.UI.WPF.Services
                     {
                         // Очистить текст от аннотаций Whisper в скобках
                         var cleanedText = CleanWhisperText(result.Text);
+
+                        // D6: compression-ratio detector — поймать «дикие» повторы до dedup'ов
+                        // (если ratio высокий, dedup'ы могут не справиться или сильно изменить текст).
+                        const double CompressionThreshold = 2.4;  // дефолт OpenAI Whisper, хардкод как первая итерация
+                        var compressionRatio = GetCompressionRatio(cleanedText);
+                        if (compressionRatio >= CompressionThreshold)
+                        {
+                            Log.Information("[Segment #{Id}] Высокий compression-ratio {Ratio:F2} ≥ {Threshold:F1}, дроп сегмента: \"{Text}\"",
+                                segmentId, compressionRatio, CompressionThreshold, cleanedText.Length > 100 ? cleanedText.Substring(0, 100) + "..." : cleanedText);
+                            return new RecognitionResult { Success = true, Text = string.Empty };
+                        }
+
                         cleanedText = CollapsePhraseRepeats(cleanedText);
                         cleanedText = CollapseRepeatedWords(cleanedText);
                         cleanedText = RemoveIntraSegmentDuplicates(cleanedText);
@@ -310,6 +322,26 @@ namespace LWhisper.UI.WPF.Services
             "Спасибо за внимание",
             "Thanks for watching",
         };
+
+        /// <summary>
+        /// Compression-ratio detector: соотношение длины текста к длине его gzip-сжатого варианта.
+        /// Большой ratio (≥ CompressionRatioThreshold, дефолт 2.4) означает сильно повторяющийся текст —
+        /// типичный признак Whisper-галлюцинации. Универсальная защита поверх regex/HashSet dedup'ов.
+        /// </summary>
+        private static double GetCompressionRatio(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return 1.0;
+            var rawBytes = System.Text.Encoding.UTF8.GetBytes(text);
+            if (rawBytes.Length < 32) return 1.0;  // короткий текст compression-ratio ненадёжен
+
+            using var ms = new System.IO.MemoryStream();
+            using (var gz = new System.IO.Compression.GZipStream(ms, System.IO.Compression.CompressionLevel.Optimal))
+            {
+                gz.Write(rawBytes, 0, rawBytes.Length);
+            }
+            var compressedLength = ms.Length;
+            return compressedLength > 0 ? (double)rawBytes.Length / compressedLength : 1.0;
+        }
 
         /// <summary>
         /// Проверка текста на известные галлюцинации Whisper (YouTube-боилерплейт из training corpus).
