@@ -110,17 +110,6 @@ namespace LWhisper.UI.WPF.Services
                         // Очистить текст от аннотаций Whisper в скобках
                         var cleanedText = CleanWhisperText(result.Text);
 
-                        // D6: compression-ratio detector — поймать «дикие» повторы до dedup'ов
-                        // (если ratio высокий, dedup'ы могут не справиться или сильно изменить текст).
-                        const double CompressionThreshold = 2.4;  // дефолт OpenAI Whisper, хардкод как первая итерация
-                        var compressionRatio = GetCompressionRatio(cleanedText);
-                        if (compressionRatio >= CompressionThreshold)
-                        {
-                            Log.Information("[Segment #{Id}] Высокий compression-ratio {Ratio:F2} ≥ {Threshold:F1}, дроп сегмента: \"{Text}\"",
-                                segmentId, compressionRatio, CompressionThreshold, cleanedText.Length > 100 ? cleanedText.Substring(0, 100) + "..." : cleanedText);
-                            return new RecognitionResult { Success = true, Text = string.Empty };
-                        }
-
                         cleanedText = CollapsePhraseRepeats(cleanedText);
                         cleanedText = CollapseRepeatedWords(cleanedText);
                         cleanedText = RemoveIntraSegmentDuplicates(cleanedText);
@@ -133,6 +122,18 @@ namespace LWhisper.UI.WPF.Services
                             {
                                 Log.Information("[Segment #{Id}] Известная галлюцинация Whisper отфильтрована: \"{Text}\"",
                                     segmentId, cleanedText);
+                                return new RecognitionResult { Success = true, Text = string.Empty };
+                            }
+
+                            // D6: compression-ratio detector — safety net ПОСЛЕ dedup'ов.
+                            // Простые повторы должны быть схлопнуты выше (CollapsePhraseRepeats/RemoveIntraSegmentDuplicates).
+                            // Если ratio всё ещё высокий — это дикая галлюцинация, которую не вытащили regex'ы → дроп.
+                            const double CompressionThreshold = 2.4;  // дефолт OpenAI Whisper
+                            var compressionRatio = GetCompressionRatio(cleanedText);
+                            if (compressionRatio >= CompressionThreshold)
+                            {
+                                Log.Information("[Segment #{Id}] Высокий compression-ratio {Ratio:F2} ≥ {Threshold:F1} после dedup'ов, дроп сегмента: \"{Text}\"",
+                                    segmentId, compressionRatio, CompressionThreshold, cleanedText.Length > 100 ? cleanedText.Substring(0, 100) + "..." : cleanedText);
                                 return new RecognitionResult { Success = true, Text = string.Empty };
                             }
 
