@@ -61,6 +61,31 @@ namespace LWhisper.Core.Models
         /// По дефолту off — скорость важнее, beam включается через UI как опция.
         /// </summary>
         public bool UseBeamSearch { get; set; } = false;
+
+        /// <summary>
+        /// Длительность кольцевого pre-roll буфера (мс). Аудио до VAD-триггера, прицепляется
+        /// к началу сегмента — лечит потерю первого слова.
+        /// </summary>
+        public int PreRollBufferMs { get; set; } = 500;
+
+        /// <summary>
+        /// Hysteresis: сколько подряд speech-фреймов (по 30 мс) нужно для триггера начала речи.
+        /// 1 = старое поведение (мгновенный триггер), 2-3 = устойчивее к шуму.
+        /// </summary>
+        public int SpeechTriggerFrames { get; set; } = 2;
+
+        /// <summary>
+        /// Сколько миллисекунд тишины оставлять в конце сегмента перед отправкой в Whisper.
+        /// 0 = старое поведение (полное обрезание), 200 = whisper получает хвостовую тишину
+        /// и не рубит последнее слово.
+        /// </summary>
+        public int EndSilenceKeepMs { get; set; } = 200;
+
+        /// <summary>
+        /// Порог compression-ratio (gzip): если text.Length / gzip(text).Length выше — сегмент
+        /// считается повторяющимся мусором (галлюцинацией). 2.4 — дефолт OpenAI Whisper.
+        /// </summary>
+        public double CompressionRatioThreshold { get; set; } = 2.4;
     }
 }
 
