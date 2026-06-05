@@ -207,14 +207,17 @@ namespace LWhisper.UI.WPF.Views
                 DownloadStatusText.Text = "Скачивание модели...";
 
                 var modelUrl = ModelCatalog.GetDownloadUrl(model);
+                var tempPath = modelPath + ".part";
 
+                // Скачиваем во временный файл — целевой путь подменяем только после полной проверки.
+                // Иначе обрыв связи оставлял битый файл, который File.Exists считал «установленной моделью».
                 using (var response = await _httpClient.GetAsync(modelUrl, HttpCompletionOption.ResponseHeadersRead))
                 {
                     response.EnsureSuccessStatusCode();
 
                     var totalBytes = response.Content.Headers.ContentLength ?? 0;
                     using (var contentStream = await response.Content.ReadAsStreamAsync())
-                    using (var fileStream = new FileStream(modelPath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true))
+                    using (var fileStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true))
                     {
                         var buffer = new byte[8192];
                         long totalRead = 0;
@@ -232,8 +235,18 @@ namespace LWhisper.UI.WPF.Views
                                 DownloadStatusText.Text = $"Скачано {totalRead / 1024 / 1024} МБ из {totalBytes / 1024 / 1024} МБ";
                             }
                         }
+
+                        // Проверка целостности: если сервер прислал Content-Length — размер должен совпасть.
+                        if (totalBytes > 0 && totalRead != totalBytes)
+                        {
+                            throw new IOException($"Скачано {totalRead} из {totalBytes} байт — файл неполный (обрыв связи?)");
+                        }
                     }
                 }
+
+                // Атомарная замена: подменяем целевой файл только после успешного полного скачивания.
+                if (File.Exists(modelPath)) File.Delete(modelPath);
+                File.Move(tempPath, modelPath);
 
                 Settings.WhisperModelSize = model.Id;
                 DownloadStatusText.Text = "✓ Модель успешно скачана!";
@@ -247,6 +260,9 @@ namespace LWhisper.UI.WPF.Views
             }
             catch (Exception ex)
             {
+                // Убрать недокачанный временный файл, чтобы он не подменял реальную модель
+                try { var partPath = modelPath + ".part"; if (File.Exists(partPath)) File.Delete(partPath); } catch { }
+
                 DownloadStatusText.Text = $"✗ Ошибка: {ex.Message}";
                 DownloadStatusText.Foreground = System.Windows.Media.Brushes.Red;
                 MessageBox.Show($"Ошибка скачивания модели: {ex.Message}", "LWhisper",

@@ -198,6 +198,9 @@ namespace LWhisper.UI.WPF.Services
                 }
             }, _cancellationTokenSource.Token);
 
+            // КОНТРАКТ (фикс B2): задача регистрируется СИНХРОННО — никаких await до этой точки.
+            // StreamingAudioRecorder.StopRecordingAsync синхронно зовёт FinalSegmentReady → этот метод
+            // и рассчитывает, что задача окажется в _activeTasks ДО возврата, чтобы WaitAllAsync её дождался.
             lock (_lockObj)
             {
                 _activeTasks.Add(task);
@@ -431,7 +434,9 @@ namespace LWhisper.UI.WPF.Services
         // RemoveIntraSegmentDuplicates это не ловит — он работает только если между повторами есть знак препинания.
         private static readonly System.Text.RegularExpressions.Regex RepeatedWordsRegex =
             new System.Text.RegularExpressions.Regex(
-                @"\b([\p{L}\p{N}_]+)(?:\s+\1){1,}\b",
+                // [\s,;:] — повторы ловятся и через пробел, и через запятую/точку-с-запятой/двоеточие
+                // (Whisper-залипания вида «гриди, гриди» раньше утекали — регекс требовал только \s).
+                @"\b([\p{L}\p{N}_]+)(?:[\s,;:]+\1){1,}\b",
                 System.Text.RegularExpressions.RegexOptions.Compiled |
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 

@@ -377,98 +377,90 @@ namespace LWhisper.UI.WPF.Services
             
             _isRecording = false;
 
-            await Task.Delay(100); // Дать время для завершения обработки
+            await Task.Delay(100); // Дать время in-flight OnDataAvailable/EmitSegment завершиться
 
             Log.Debug("Потоковая запись остановлена");
 
-            // Отправить последний сегмент, если есть данные
-            if (_currentSegmentBuffer.Length > 0)
+            // B1-фикс: снять снимок буфера и освободить его под _segmentLock — исключаем гонку с
+            // EmitSegment (он тоже держит этот лок). Раньше StopRecordingAsync читал/диспозил буфер без лока.
+            byte[] finalBytes;
+            lock (_segmentLock)
             {
-                var duration = GetSegmentDurationMs();
+                finalBytes = (_currentSegmentBuffer != null && _currentSegmentBuffer.Length > 0)
+                    ? _currentSegmentBuffer.ToArray()
+                    : Array.Empty<byte>();
 
-                if (duration >= _settings.MinSegmentDurationMs)
+                _waveIn?.Dispose();
+                _currentSegmentBuffer?.Dispose();
+                _waveIn = null;
+                _currentSegmentBuffer = null;
+            }
+
+            // Дальше работаем только с локальным finalBytes — общего состояния больше нет, лок не нужен.
+            if (finalBytes.Length == 0)
+            {
+                return new AudioData();
+            }
+
+            int bytesPerSample = _sampleRate * _channels * _bitsPerSample / 8; // 32000 байт/с
+            double totalDuration = (finalBytes.Length / (double)bytesPerSample) * 1000.0;
+            if (totalDuration < _settings.MinSegmentDurationMs)
+            {
+                Log.Debug("Финальный сегмент слишком короткий ({Duration}мс), игнорируется", (int)totalDuration);
+                return new AudioData();
+            }
+
+            int bytesPerMs = bytesPerSample / 1000; // 32 байта/мс
+            int maxBytes = _settings.MaxSegmentDurationMs * bytesPerMs;
+
+            AudioData? lastSegmentData = null;
+            int offset = 0;
+            while (offset < finalBytes.Length)
+            {
+                int chunkSize = Math.Min(maxBytes, finalBytes.Length - offset);
+                double chunkDurationMs = (chunkSize / (double)bytesPerSample) * 1000.0;
+                if (chunkDurationMs < _settings.MinSegmentDurationMs)
                 {
-                    var allBytes = _currentSegmentBuffer.ToArray();
-                    int bytesPerMs = _sampleRate * _channels * _bitsPerSample / 8 / 1000; // 32 bytes/ms
-                    int maxBytes = _settings.MaxSegmentDurationMs * bytesPerMs;
+                    Log.Debug("Финальный остаток {Duration}мс слишком короткий, пропускается", (int)chunkDurationMs);
+                    break;
+                }
 
-                    // Разбить на части если превышает лимит
-                    AudioData? lastSegmentData = null;
-                    int offset = 0;
+                var segmentId = System.Threading.Interlocked.Increment(ref _segmentCounter);
+                var chunkBytes = new byte[chunkSize];
+                Array.Copy(finalBytes, offset, chunkBytes, 0, chunkSize);
 
-                    while (offset < allBytes.Length)
-                    {
-                        int chunkSize = Math.Min(maxBytes, allBytes.Length - offset);
+                var segmentData = new AudioData
+                {
+                    RawData = chunkBytes,
+                    SampleRate = _sampleRate,
+                    Channels = _channels,
+                    BitsPerSample = _bitsPerSample,
+                    Duration = TimeSpan.FromMilliseconds(chunkDurationMs)
+                };
 
-                        // Проверить минимальную длительность чанка
-                        double chunkDurationMs = (chunkSize / (double)(_sampleRate * _channels * _bitsPerSample / 8)) * 1000.0;
-                        if (chunkDurationMs < _settings.MinSegmentDurationMs)
-                        {
-                            Log.Debug("Финальный остаток {Duration}мс слишком короткий, пропускается", (int)chunkDurationMs);
-                            break;
-                        }
+                bool isLastChunk = (offset + chunkSize >= finalBytes.Length);
 
-                        var segmentId = System.Threading.Interlocked.Increment(ref _segmentCounter);
-                        var chunkBytes = new byte[chunkSize];
-                        Array.Copy(allBytes, offset, chunkBytes, 0, chunkSize);
-
-                        var segmentData = new AudioData
-                        {
-                            RawData = chunkBytes,
-                            SampleRate = _sampleRate,
-                            Channels = _channels,
-                            BitsPerSample = _bitsPerSample,
-                            Duration = TimeSpan.FromMilliseconds(chunkDurationMs)
-                        };
-
-                        bool isLastChunk = (offset + chunkSize >= allBytes.Length);
-
-                        if (isLastChunk)
-                        {
-                            Log.Information("[Segment #{Id}] Финальный сегмент: длительность={Duration}мс",
-                                segmentId, (int)chunkDurationMs);
-                            lastSegmentData = segmentData;
-
-                            Task.Run(() =>
-                            {
-                                try { FinalSegmentReady?.Invoke(segmentData); }
-                                catch (Exception ex) { Log.Error(ex, "[Segment #{Id}] Ошибка при обработке FinalSegmentReady", segmentId); }
-                            });
-                        }
-                        else
-                        {
-                            Log.Information("[Segment #{Id}] Нарезка финального буфера: длительность={Duration}мс",
-                                segmentId, (int)chunkDurationMs);
-
-                            Task.Run(() =>
-                            {
-                                try { SegmentReady?.Invoke(segmentData); }
-                                catch (Exception ex) { Log.Error(ex, "[Segment #{Id}] Ошибка при обработке SegmentReady", segmentId); }
-                            });
-                        }
-
-                        offset += chunkSize;
-                    }
-
-                    _waveIn?.Dispose();
-                    _currentSegmentBuffer?.Dispose();
-                    _waveIn = null;
-                    _currentSegmentBuffer = null;
-
-                    return lastSegmentData ?? new AudioData();
+                // B2-фикс: СИНХРОННО (не Task.Run!) — обработчик синхронно регистрирует задачу
+                // распознавания в SegmentRecognitionManager._activeTasks ДО возврата из метода.
+                // Иначе WaitAllAsync в App.OnRecordingStopped мог отработать раньше и потерять последний сегмент.
+                if (isLastChunk)
+                {
+                    Log.Information("[Segment #{Id}] Финальный сегмент: длительность={Duration}мс", segmentId, (int)chunkDurationMs);
+                    lastSegmentData = segmentData;
+                    try { FinalSegmentReady?.Invoke(segmentData); }
+                    catch (Exception ex) { Log.Error(ex, "[Segment #{Id}] Ошибка при обработке FinalSegmentReady", segmentId); }
                 }
                 else
                 {
-                    Log.Debug("Финальный сегмент слишком короткий ({Duration}мс), игнорируется", duration);
+                    Log.Information("[Segment #{Id}] Нарезка финального буфера: длительность={Duration}мс", segmentId, (int)chunkDurationMs);
+                    try { SegmentReady?.Invoke(segmentData); }
+                    catch (Exception ex) { Log.Error(ex, "[Segment #{Id}] Ошибка при обработке SegmentReady", segmentId); }
                 }
+
+                offset += chunkSize;
             }
 
-            _waveIn?.Dispose();
-            _currentSegmentBuffer?.Dispose();
-            _waveIn = null;
-            _currentSegmentBuffer = null;
-
-            return new AudioData();
+            return lastSegmentData ?? new AudioData();
         }
 
         public List<string> GetAvailableDevices()
