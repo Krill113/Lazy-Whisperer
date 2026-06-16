@@ -57,6 +57,9 @@ publish/
 # Claude Code internal tooling
 .claude/
 
+# Serena (MCP code navigator) internal state
+.serena/
+
 # Internal planning and specs (superpowers workflow)
 docs/superpowers/
 .planning/
