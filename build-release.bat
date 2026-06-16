@@ -27,12 +27,15 @@ REM plain DllImport("WebRtcVad.dll") which, in single-file mode, is NOT resolved
 REM runtimes\win-x64\native\. Copy it next to the exe so the streaming VAD mode keeps working.
 IF EXIST "publish\%CONFIGURATION%\win-x64\runtimes\win-x64\native\WebRtcVad.dll" copy /Y "publish\%CONFIGURATION%\win-x64\runtimes\win-x64\native\WebRtcVad.dll" "publish\%CONFIGURATION%\win-x64\WebRtcVad.dll" >nul
 
+REM Ship third-party license notices alongside the binaries (OSS attribution: BSD-3, Apache-2.0).
+IF EXIST "THIRD-PARTY-NOTICES.txt" copy /Y "THIRD-PARTY-NOTICES.txt" "publish\%CONFIGURATION%\win-x64\THIRD-PARTY-NOTICES.txt" >nul
+
 echo.
 echo ====================================
 echo  Build Complete!
 echo  Output: publish\%CONFIGURATION%\win-x64\LWhisper.UI.WPF.exe
 echo.
-echo  IMPORTANT: share the WHOLE win-x64 folder (exe + runtimes\ + WebRtcVad.dll),
+echo  IMPORTANT: share the WHOLE win-x64 folder (exe + runtimes\ + WebRtcVad.dll + THIRD-PARTY-NOTICES.txt),
 echo  not just the .exe - the native libraries live alongside it.
 echo ====================================
 echo.

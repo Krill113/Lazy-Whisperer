@@ -1,0 +1,44 @@
+This software includes third-party components with the following licenses:
+
+---
+## Whisper.net, Whisper.net.Runtime, Whisper.net.Runtime.Vulkan
+Copyright (c) sandrohanea and contributors
+License: MIT — https://github.com/sandrohanea/whisper.net/blob/main/LICENSE
+
+## whisper.cpp (native runtime embedded in Whisper.net.Runtime)
+Copyright (c) 2023-2026 The ggml authors
+License: MIT — https://github.com/ggerganov/whisper.cpp/blob/master/LICENSE
+
+## NAudio
+Copyright (c) 2020 Mark Heath
+License: MIT — https://github.com/naudio/NAudio/blob/master/license.txt
+
+## WebRtcVadSharp
+Copyright (c) 2020 Jay Miller
+License: MIT — https://github.com/ladenedge/WebRtcVadSharp/blob/master/LICENSE
+
+## WebRtcVad.dll (native, embedded in WebRtcVadSharp)
+Copyright (c) 2011, The WebRTC project authors
+License: BSD 3-Clause
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+3. Neither the name of Google nor the names of its contributors may be used
+   to endorse or promote products derived from this software without specific
+   prior written permission.
+
+## Hardcodet.NotifyIcon.Wpf
+Copyright (c) Philipp Sumi
+License: MIT — https://github.com/hardcodet/wpf-notifyicon/blob/master/LICENSE
+
+## Serilog, Serilog.Sinks.Console, Serilog.Sinks.File
+Copyright (c) Serilog Contributors
+License: Apache License 2.0 — https://www.apache.org/licenses/LICENSE-2.0
+
+## System.Drawing.Common, System.Text.Json
+Copyright (c) .NET Foundation and Contributors
+License: MIT — https://github.com/dotnet/runtime/blob/main/LICENSE.TXT
