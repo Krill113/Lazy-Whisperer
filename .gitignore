@@ -43,9 +43,9 @@ bld/
 Models/*.bin
 Models/*.gguf
 
-# User settings
-*.json
-!appsettings.json
+# User settings (узко — не глотать global.json / dotnet-tools.json и т.п.)
+**/settings.local.json
+appsettings.local.json
 
 # Logs
 logs/
@@ -53,4 +53,11 @@ logs/
 
 # Publish output
 publish/
+
+# Claude Code internal tooling
+.claude/
+
+# Internal planning and specs (superpowers workflow)
+docs/superpowers/
+.planning/
 
