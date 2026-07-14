@@ -57,6 +57,11 @@ namespace LWhisper.Core.Models
         public bool GpuFailed { get; set; } = false;
 
         /// <summary>
+        /// Автоматически проверять обновления при запуске приложения
+        /// </summary>
+        public bool AutoUpdateCheckEnabled { get; set; } = true;
+
+        /// <summary>
         /// Настройки потокового распознавания
         /// </summary>
         public StreamingSettings Streaming { get; set; } = new StreamingSettings();

@@ -12,8 +12,6 @@
 
   <ItemGroup>
     <PackageReference Include="Whisper.net" Version="1.9.0" />
-    <PackageReference Include="Whisper.net.Runtime" Version="1.9.0" />
-    <PackageReference Include="Whisper.net.Runtime.Vulkan" Version="1.9.0" />
     <PackageReference Include="Serilog" Version="4.2.0" />
   </ItemGroup>
 

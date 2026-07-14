@@ -8,6 +8,12 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>LWhisper.UI.WPF</RootNamespace>
     <ApplicationIcon>Resources\app_icon.ico</ApplicationIcon>
+    <!-- Локально всегда 0.0.0 (dev-сборка, авто-проверка обновлений отключается);
+         реальная версия приходит из git-тега через CI: -p:Version=X.Y.Z -->
+    <Version>0.0.0</Version>
+    <!-- Собственный Main: updater-режим (apply-update) должен отработать ДО конструирования
+         WPF Application: базовый ctor уже дергает loose-нативки WPF, которых нет у копии exe -->
+    <StartupObject>LWhisper.UI.WPF.Program</StartupObject>
   </PropertyGroup>
 
   <ItemGroup>
@@ -20,6 +26,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- D7: нативные рантаймы Whisper живут в дистрибутиве (UI.WPF), не в движке-библиотеке -->
+    <PackageReference Include="Whisper.net.Runtime" Version="1.9.0" />
+    <PackageReference Include="Whisper.net.Runtime.Vulkan" Version="1.9.0" />
     <PackageReference Include="Hardcodet.NotifyIcon.Wpf" Version="2.0.1" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="Serilog" Version="4.3.0" />

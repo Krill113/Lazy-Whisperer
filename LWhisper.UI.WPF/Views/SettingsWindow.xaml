@@ -15,6 +15,7 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
@@ -204,7 +205,45 @@
                 </StackPanel>
             </GroupBox>
 
-            <StackPanel Grid.Row="8" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <GroupBox Grid.Row="7" Header="Обновления" Margin="0,0,0,10">
+                <StackPanel Margin="10">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBlock Text="Версия приложения:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBlock x:Name="CurrentVersionText" Text="—" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    </StackPanel>
+
+                    <CheckBox x:Name="AutoUpdateCheckBox"
+                              Content="Проверять обновления при запуске"
+                              IsChecked="True" Margin="0,0,0,8"/>
+
+                    <StackPanel Orientation="Horizontal">
+                        <Button x:Name="CheckUpdatesButton" Content="Проверить сейчас"
+                                Width="140" HorizontalAlignment="Left" Click="CheckUpdatesButton_Click"/>
+                        <TextBlock x:Name="UpdateCheckStatusText" Text="" FontSize="11" Foreground="Gray"
+                                   VerticalAlignment="Center" Margin="10,0,0,0" TextWrapping="Wrap"/>
+                    </StackPanel>
+
+                    <Border x:Name="UpdateAvailablePanel" Visibility="Collapsed"
+                            Background="#EAF6EA" CornerRadius="6" Padding="10" Margin="0,10,0,0">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                <TextBlock x:Name="UpdateAvailableText" Text="Доступна версия —" FontWeight="SemiBold"/>
+                                <TextBlock Margin="10,0,0,0">
+                                    <Hyperlink x:Name="ReleaseNotesLink" Click="ReleaseNotesLink_Click">Что нового</Hyperlink>
+                                </TextBlock>
+                            </StackPanel>
+                            <Button x:Name="UpdateNowButton" Content="Скачать и установить"
+                                    Width="170" HorizontalAlignment="Left" Click="UpdateNowButton_Click"/>
+                            <ProgressBar x:Name="UpdateProgressBar" Height="16" Margin="0,8,0,0"
+                                         Visibility="Collapsed" Minimum="0" Maximum="100"/>
+                            <TextBlock x:Name="UpdateStatusText" Text="" Margin="0,5,0,0" FontSize="11"
+                                       Foreground="Gray" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </GroupBox>
+
+            <StackPanel Grid.Row="9" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
                 <Button Content="Сохранить" Width="100" Margin="5" Click="SaveButton_Click"/>
                 <Button Content="Отмена" Width="100" Margin="5" Click="CancelButton_Click"/>
             </StackPanel>

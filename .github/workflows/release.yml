@@ -1,0 +1,131 @@
+name: Release
+
+# Тег-фильтр GitHub — это GLOB, не regex: 'v*.*.*' грубо требует 3 компонент,
+# а строгую проверку vX.Y.Z делает шаг «Extract version» (иначе v1.0/v1.2.3.4 ломают handshake)
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  OUTPUT_DIR: publish/Release/win-x64
+
+jobs:
+  release:
+    name: Build & Publish Release
+    runs-on: windows-2025
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          # Токен contents:write не должен лежать в .git/config, пока dotnet исполняет NuGet-таргеты
+          persist-credentials: false
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Cache NuGet
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Extract version from tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag must be vX.Y.Z (got $GITHUB_REF_NAME) — auto-updater handshake requires 3 components"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Run tests
+        run: dotnet test LWhisper.Tests/LWhisper.Tests.csproj --configuration Release
+
+      - name: Publish self-contained single-file
+        shell: powershell
+        run: |
+          dotnet publish LWhisper.UI.WPF/LWhisper.UI.WPF.csproj `
+            --configuration Release `
+            --runtime win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=false `
+            -p:EnableCompressionInSingleFile=true `
+            -p:DebugType=none `
+            -p:Version=${{ env.VERSION }} `
+            --output ${{ env.OUTPUT_DIR }}
+
+      # WebRtcVadSharp = DllImport("WebRtcVad.dll") без пути: в single-file не резолвится
+      # из runtimes/, DLL должна лежать рядом с exe (то же делает build-release.bat)
+      - name: Copy WebRtcVad.dll next to exe (single-file fix)
+        shell: powershell
+        run: |
+          $src = "${{ env.OUTPUT_DIR }}/runtimes/win-x64/native/WebRtcVad.dll"
+          $dst = "${{ env.OUTPUT_DIR }}/WebRtcVad.dll"
+          if (Test-Path $src) { Copy-Item $src $dst -Force; Write-Host "OK" }
+          else { Write-Error "WebRtcVad.dll not found - streaming VAD would be broken!"; exit 1 }
+
+      - name: Copy THIRD-PARTY-NOTICES.txt
+        shell: powershell
+        run: Copy-Item "THIRD-PARTY-NOTICES.txt" "${{ env.OUTPUT_DIR }}/THIRD-PARTY-NOTICES.txt" -Force
+
+      # win-x86 нативки и отладочный мусор NuGet-пакетов в win-x64 поставке не нужны
+      - name: Prune package junk
+        shell: powershell
+        run: |
+          if (Test-Path "${{ env.OUTPUT_DIR }}/runtimes/win-x86") { Remove-Item -Recurse -Force "${{ env.OUTPUT_DIR }}/runtimes/win-x86" }
+          Get-ChildItem "${{ env.OUTPUT_DIR }}" -Recurse -Include *.pdb, *.exp, *.lib | Remove-Item -Force
+
+      # Контракт согласован с UpdateApplier.RequiredFiles — апдейтер проверяет тот же набор.
+      # whisper.dll обязателен: его отсутствие = зелёный пайплайн с мёртвым распознаванием
+      - name: Verify artifact contract
+        shell: powershell
+        run: |
+          $required = @(
+            "${{ env.OUTPUT_DIR }}/LWhisper.UI.WPF.exe",
+            "${{ env.OUTPUT_DIR }}/WebRtcVad.dll",
+            "${{ env.OUTPUT_DIR }}/wpfgfx_cor3.dll",
+            "${{ env.OUTPUT_DIR }}/THIRD-PARTY-NOTICES.txt",
+            "${{ env.OUTPUT_DIR }}/runtimes",
+            "${{ env.OUTPUT_DIR }}/runtimes/win-x64/whisper.dll"
+          )
+          foreach ($i in $required) { if (-not (Test-Path $i)) { Write-Error "MISSING: $i"; exit 1 } }
+          Write-Host "Artifact contract OK"
+
+      # ZipFile.CreateFromDirectory даёт forward-slash имена записей (Compress-Archive в PS5.1
+      # пишет backslash — ломает распаковку на Linux у пользователей публичного релиза)
+      - name: Create ZIP
+        shell: powershell
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = "LWhisper-win-x64-v${{ env.VERSION }}.zip"
+          [IO.Compression.ZipFile]::CreateFromDirectory("${{ env.OUTPUT_DIR }}", $zip, [IO.Compression.CompressionLevel]::Optimal, $false)
+          echo "ZIP_PATH=$zip" >> $env:GITHUB_ENV
+
+      - name: Generate SHA256SUMS
+        shell: powershell
+        run: |
+          $hash = (Get-FileHash -Algorithm SHA256 -Path "${{ env.ZIP_PATH }}").Hash.ToLower()
+          "$hash  ${{ env.ZIP_PATH }}" | Out-File -Encoding ascii SHA256SUMS.txt
+          echo "SHA256SUMS_PATH=SHA256SUMS.txt" >> $env:GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          name: LWhisper v${{ env.VERSION }}
+          generate_release_notes: true
+          files: |
+            ${{ env.ZIP_PATH }}
+            ${{ env.SHA256SUMS_PATH }}
+          fail_on_unmatched_files: true

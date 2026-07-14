@@ -19,6 +19,11 @@ namespace LWhisper.UI.WPF.Views
         public bool SettingsAccepted { get; private set; }
         private readonly HttpClient _httpClient = new();
         private static readonly string[] _aggressivenessLabels = { "Мягкий", "Норма", "Строгий", "Максимум" };
+        private readonly UpdateService _updateService;
+        private UpdateInfo? _availableUpdate;
+
+        /// <summary>Найдено обновление (ручной проверкой) — App синхронизирует своё состояние</summary>
+        public event Action<UpdateInfo>? UpdateFound;
 
         /// <summary>
         /// Элемент списка моделей для отображения в UI
@@ -33,7 +38,8 @@ namespace LWhisper.UI.WPF.Views
             public string StatusIndicator { get; init; } = "";
         }
 
-        public SettingsWindow(AppSettings currentSettings, List<string> audioDevices)
+        public SettingsWindow(AppSettings currentSettings, List<string> audioDevices,
+            UpdateService? updateService = null, UpdateInfo? availableUpdate = null)
         {
             InitializeComponent();
 
@@ -46,12 +52,155 @@ namespace LWhisper.UI.WPF.Views
                 SelectedAudioDevice = currentSettings.SelectedAudioDevice,
                 RecognitionLanguage = currentSettings.RecognitionLanguage,
                 WhisperModelSize = currentSettings.WhisperModelSize,
+                AutoUpdateCheckEnabled = currentSettings.AutoUpdateCheckEnabled,
                 Streaming = currentSettings.Streaming ?? new StreamingSettings()
             };
+
+            _updateService = updateService ?? new UpdateService();
+            _availableUpdate = availableUpdate;
 
             PopulateModelList();
             LoadSettings();
             LoadAudioDevices(audioDevices);
+            InitializeUpdateSection();
+        }
+
+        /// <summary>
+        /// Заполнить секцию «Обновления»: версия, найденный ранее апдейт (из фоновой проверки при старте)
+        /// </summary>
+        private void InitializeUpdateSection()
+        {
+            CurrentVersionText.Text = UpdateService.IsDevBuild
+                ? $"{UpdateService.CurrentVersion} (dev-сборка)"
+                : UpdateService.CurrentVersion.ToString();
+
+            if (_availableUpdate != null)
+            {
+                ShowAvailableUpdate(_availableUpdate);
+            }
+        }
+
+        private void ShowAvailableUpdate(UpdateInfo update)
+        {
+            _availableUpdate = update;
+            UpdateAvailableText.Text = $"Доступна версия {update.Version}";
+            UpdateAvailablePanel.Visibility = Visibility.Visible;
+            UpdateCheckStatusText.Text = "";
+            UpdateFound?.Invoke(update);
+        }
+
+        private async void CheckUpdatesButton_Click(object sender, RoutedEventArgs e)
+        {
+            CheckUpdatesButton.IsEnabled = false;
+            UpdateCheckStatusText.Text = "Проверка...";
+            try
+            {
+                var update = await _updateService.CheckAsync();
+                if (update != null)
+                {
+                    ShowAvailableUpdate(update);
+                }
+                else
+                {
+                    UpdateAvailablePanel.Visibility = Visibility.Collapsed;
+                    UpdateCheckStatusText.Text = UpdateService.IsDevBuild
+                        ? "Новых релизов нет (dev-сборка сравнивается как 0.0.0)"
+                        : "У вас последняя версия";
+                }
+            }
+            catch (UpdateCheckException ex)
+            {
+                UpdateCheckStatusText.Text = ex.RateLimited
+                    ? "GitHub ограничил частоту запросов — попробуйте позже"
+                    : $"Не удалось проверить: {ex.Message}";
+            }
+            catch (Exception ex)
+            {
+                UpdateCheckStatusText.Text = $"Ошибка: {ex.Message}";
+                Serilog.Log.Error(ex, "Ошибка ручной проверки обновлений");
+            }
+            finally
+            {
+                CheckUpdatesButton.IsEnabled = true;
+            }
+        }
+
+        private async void UpdateNowButton_Click(object sender, RoutedEventArgs e)
+        {
+            // Снапшот: параллельная «Проверить сейчас» может подменить _availableUpdate,
+            // и LaunchUpdater получил бы версию, не соответствующую скачанному ZIP
+            var update = _availableUpdate;
+            if (update == null) return;
+
+            if (UpdateService.IsDevBuild)
+            {
+                MessageBox.Show("Dev-сборка не обновляется автоматически. Соберите релиз или скачайте ZIP с GitHub.",
+                    "LWhisper", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            UpdateNowButton.IsEnabled = false;
+            CheckUpdatesButton.IsEnabled = false;
+            UpdateProgressBar.Visibility = Visibility.Visible;
+            UpdateStatusText.Text = "Скачивание...";
+            try
+            {
+                var progress = new Progress<(long read, long total)>(p =>
+                {
+                    if (p.total > 0)
+                    {
+                        UpdateProgressBar.Value = (double)p.read / p.total * 100;
+                        UpdateStatusText.Text = $"Скачано {p.read / 1024 / 1024} МБ из {p.total / 1024 / 1024} МБ";
+                    }
+                });
+
+                var zipPath = await _updateService.DownloadAsync(update, progress);
+
+                UpdateStatusText.Text = "Проверка целостности пройдена. Перезапуск для установки...";
+                var confirm = MessageBox.Show(
+                    $"Обновление {update.Version} скачано и проверено.\n\n" +
+                    "Приложение закроется, обновится и запустится заново. Продолжить?",
+                    "LWhisper", MessageBoxButton.YesNo, MessageBoxImage.Question);
+
+                if (confirm == MessageBoxResult.Yes)
+                {
+                    _updateService.LaunchUpdater(zipPath, update.Version);
+                    // Приложение завершается — сюда обычно уже не возвращаемся
+                }
+                else
+                {
+                    UpdateStatusText.Text = "Установка отложена — ZIP сохранён, можно установить позже";
+                }
+            }
+            catch (Exception ex)
+            {
+                UpdateStatusText.Text = $"✗ {ex.Message}";
+                Serilog.Log.Error(ex, "Ошибка скачивания/установки обновления");
+                MessageBox.Show($"Не удалось обновиться: {ex.Message}", "LWhisper",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                UpdateNowButton.IsEnabled = true;
+                CheckUpdatesButton.IsEnabled = true;
+                UpdateProgressBar.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private void ReleaseNotesLink_Click(object sender, RoutedEventArgs e)
+        {
+            if (_availableUpdate == null) return;
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_availableUpdate.Release.HtmlUrl)
+                {
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Warning(ex, "Не удалось открыть страницу релиза");
+            }
         }
 
         /// <summary>
@@ -121,6 +270,7 @@ namespace LWhisper.UI.WPF.Views
             HotkeyTextBox.Text = Settings.HotkeyBinding ?? "Ctrl+Shift+Space";
             AutoInsertDelayTextBox.Text = Settings.AutoInsertDelaySeconds.ToString();
             AutoInsertEnabledCheckBox.IsChecked = Settings.AutoInsertEnabled;
+            AutoUpdateCheckBox.IsChecked = Settings.AutoUpdateCheckEnabled;
 
             // Загрузить настройки потокового режима
             StreamingEnabledCheckBox.IsChecked = Settings.Streaming?.Enabled ?? true;
@@ -443,6 +593,7 @@ namespace LWhisper.UI.WPF.Views
             }
 
             Settings.AutoInsertEnabled = AutoInsertEnabledCheckBox.IsChecked == true;
+            Settings.AutoUpdateCheckEnabled = AutoUpdateCheckBox.IsChecked == true;
 
             Settings.SelectedAudioDevice = AudioDeviceComboBox.SelectedItem as string;
 

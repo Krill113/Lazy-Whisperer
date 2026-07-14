@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LWhisper.Core", "LWhisper.C
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LWhisper.SpeechEngine", "LWhisper.SpeechEngine\LWhisper.SpeechEngine.csproj", "{695BB453-FCB4-4BF6-BC08-CDA88DA7C565}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LWhisper.Tests", "LWhisper.Tests\LWhisper.Tests.csproj", "{F9A433C0-348A-4A4B-8540-1302E00EF320}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -55,6 +57,18 @@ Global
 		{695BB453-FCB4-4BF6-BC08-CDA88DA7C565}.Release|x64.Build.0 = Release|Any CPU
 		{695BB453-FCB4-4BF6-BC08-CDA88DA7C565}.Release|x86.ActiveCfg = Release|Any CPU
 		{695BB453-FCB4-4BF6-BC08-CDA88DA7C565}.Release|x86.Build.0 = Release|Any CPU
+		{F9A433C0-348A-4A4B-8540-1302E00EF320}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F9A433C0-348A-4A4B-8540-1302E00EF320}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F9A433C0-348A-4A4B-8540-1302E00EF320}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{F9A433C0-348A-4A4B-8540-1302E00EF320}.Debug|x64.Build.0 = Debug|Any CPU
+		{F9A433C0-348A-4A4B-8540-1302E00EF320}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{F9A433C0-348A-4A4B-8540-1302E00EF320}.Debug|x86.Build.0 = Debug|Any CPU
+		{F9A433C0-348A-4A4B-8540-1302E00EF320}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F9A433C0-348A-4A4B-8540-1302E00EF320}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F9A433C0-348A-4A4B-8540-1302E00EF320}.Release|x64.ActiveCfg = Release|Any CPU
+		{F9A433C0-348A-4A4B-8540-1302E00EF320}.Release|x64.Build.0 = Release|Any CPU
+		{F9A433C0-348A-4A4B-8540-1302E00EF320}.Release|x86.ActiveCfg = Release|Any CPU
+		{F9A433C0-348A-4A4B-8540-1302E00EF320}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

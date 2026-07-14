@@ -41,6 +41,20 @@ namespace LWhisper.UI.WPF.Services
 
             _trayIcon.ContextMenu = contextMenu;
             _trayIcon.TrayMouseDoubleClick += (s, e) => ShowMicrophoneRequested?.Invoke();
+
+            // Клик по баллону «доступно обновление» открывает Настройки
+            _trayIcon.TrayBalloonTipClicked += (s, e) => SettingsRequested?.Invoke();
+        }
+
+        /// <summary>
+        /// Ненавязчивое уведомление о доступном обновлении (баллон из трея)
+        /// </summary>
+        public void ShowUpdateNotification(string version)
+        {
+            _trayIcon?.ShowBalloonTip(
+                "LWhisper — доступно обновление",
+                $"Вышла версия {version}. Нажмите, чтобы открыть Настройки и обновиться.",
+                BalloonIcon.Info);
         }
 
         private Icon CreateMicrophoneIcon()

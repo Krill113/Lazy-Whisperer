@@ -29,7 +29,10 @@ namespace LWhisper.UI.WPF
         private AppSettings _settings;
         private bool _isRecording;
         private string _lastRecognizedText = string.Empty; // Для кнопки показа текста
-        
+        private Mutex? _singleInstanceMutex;
+        private UpdateService? _updateService;
+        private UpdateInfo? _availableUpdate;
+
         // Компоненты потокового режима
         private IVoiceActivityDetector? _vad;
         private SegmentRecognitionManager? _recognitionManager;
@@ -37,6 +40,7 @@ namespace LWhisper.UI.WPF
 
         public App()
         {
+            // Updater-режим перехватывается раньше, в Program.Main — сюда попадает только обычный запуск
             _settings = new AppSettings();
             InitializeLogging();
         }
@@ -63,6 +67,25 @@ namespace LWhisper.UI.WPF
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
+
+            // Recovery обновления ДО single-instance проверки: handshake-маркер должен записаться,
+            // даже если параллельно живёт другая копия приложения (иначе апдейтер откатит
+            // исправное обновление по таймауту)
+            UpdateApplier.RunStartupRecovery(UpdateService.CurrentVersion.ToString());
+
+            // Single-instance (F8): второй экземпляр молча выходит.
+            // Local\ (не Global\) — на многопользовательских VDI-хостах не блокируем других пользователей
+            _singleInstanceMutex = new Mutex(initiallyOwned: true, @"Local\LWhisper-SingleInstance", out var isFirstInstance);
+            if (!isFirstInstance)
+            {
+                Log.Warning("LWhisper уже запущен — второй экземпляр завершается");
+                MessageBox.Show("LWhisper уже запущен. Ищите виджет микрофона или иконку в трее.",
+                    "LWhisper", MessageBoxButton.OK, MessageBoxImage.Information);
+                _singleInstanceMutex.Dispose();
+                _singleInstanceMutex = null;
+                Shutdown();
+                return;
+            }
 
             try
             {
@@ -128,6 +151,9 @@ namespace LWhisper.UI.WPF
                     _hotkeyManager.RegisterHotkey(_settings.HotkeyBinding ?? "Ctrl+Shift+Space", ToggleRecording);
                 }
 
+                _updateService = new UpdateService();
+                StartBackgroundUpdateCheck();
+
                 Log.Information("Приложение инициализировано");
             }
             catch (Exception ex)
@@ -136,6 +162,50 @@ namespace LWhisper.UI.WPF
                 MessageBox.Show($"Ошибка запуска: {ex.Message}", "LWhisper", MessageBoxButton.OK, MessageBoxImage.Error);
                 Shutdown();
             }
+        }
+
+        /// <summary>
+        /// Фоновая проверка обновлений при старте (D4): включена по умолчанию,
+        /// отключается галочкой в Настройках. Dev-сборки (0.0.0) не проверяют.
+        /// При новой версии — баллон из трея (клик открывает Настройки).
+        /// </summary>
+        private void StartBackgroundUpdateCheck()
+        {
+            if (!_settings.AutoUpdateCheckEnabled)
+            {
+                Log.Debug("Авто-проверка обновлений отключена в настройках");
+                return;
+            }
+            if (UpdateService.IsDevBuild)
+            {
+                Log.Debug("Dev-сборка (0.0.0) — авто-проверка обновлений пропущена");
+                return;
+            }
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var update = await _updateService!.CheckAsync();
+                    if (update == null) return;
+
+                    _availableUpdate = update;
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        _trayManager?.ShowUpdateNotification(update.Version.ToString());
+                    });
+                }
+                catch (UpdateCheckException ex)
+                {
+                    // Сеть/rate-limit — не беспокоим пользователя, просто лог
+                    Log.Warning("Авто-проверка обновлений не удалась: {Message} (rate-limited: {RateLimited})",
+                        ex.Message, ex.RateLimited);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Неожиданная ошибка авто-проверки обновлений");
+                }
+            });
         }
 
         /// <summary>
@@ -389,7 +459,8 @@ namespace LWhisper.UI.WPF
             try
             {
                 var devices = _audioRecorder?.GetAvailableDevices() ?? new List<string>();
-                var settingsWindow = new SettingsWindow(_settings, devices);
+                var settingsWindow = new SettingsWindow(_settings, devices, _updateService, _availableUpdate);
+                settingsWindow.UpdateFound += update => _availableUpdate = update;
 
                 if (settingsWindow.ShowDialog() == true)
                 {
@@ -421,7 +492,8 @@ namespace LWhisper.UI.WPF
             try
             {
                 var devices = _audioRecorder?.GetAvailableDevices() ?? new List<string>();
-                _settingsWindow = new SettingsWindow(_settings, devices);
+                _settingsWindow = new SettingsWindow(_settings, devices, _updateService, _availableUpdate);
+                _settingsWindow.UpdateFound += update => _availableUpdate = update;
 
                 _settingsWindow.Closed += (s, e) =>
                 {
@@ -885,6 +957,8 @@ namespace LWhisper.UI.WPF
             {
                 _settingsWindow.Close();
             }
+
+            _singleInstanceMutex?.Dispose();
 
             Log.CloseAndFlush();
             base.OnExit(e);
