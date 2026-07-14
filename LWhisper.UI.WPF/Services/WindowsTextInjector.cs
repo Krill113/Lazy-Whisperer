@@ -28,12 +28,46 @@ namespace LWhisper.UI.WPF.Services
         [DllImport("user32.dll")]
         private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
 
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool OpenClipboard(IntPtr hWndNewOwner);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool CloseClipboard();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool EmptyClipboard();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr SetClipboardData(uint uFormat, IntPtr hMem);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetOpenClipboardWindow();
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GlobalAlloc(uint uFlags, UIntPtr dwBytes);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GlobalLock(IntPtr hMem);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GlobalUnlock(IntPtr hMem);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GlobalFree(IntPtr hMem);
+
         private const int INPUT_KEYBOARD = 1;
         private const uint KEYEVENTF_KEYUP = 0x0002;
         private const uint WM_PASTE = 0x0302;
         private const byte VK_CONTROL = 0x11;
         private const byte VK_V = 0x56;
         private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
+        private const uint CF_UNICODETEXT = 13;
+        private const uint GMEM_MOVEABLE = 0x0002;
+        private const int CLIPBOARD_OPEN_RETRY_COUNT = 30;
+        private const int CLIPBOARD_OPEN_RETRY_DELAY_MS = 100;
 
         private IntPtr _targetWindow;
         private IntPtr _ownWindow; // Окно самого приложения LWhisper
@@ -131,20 +165,15 @@ namespace LWhisper.UI.WPF.Services
                 // Использовать Clipboard + Ctrl+V как основной и единственный метод
                 Log.Debug("Вставка текста через Clipboard + Ctrl+V...");
                 
-                // Установить текст в буфер обмена
-                System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                // Установить текст в буфер обмена сырым WinAPI, НЕ через WPF Clipboard.SetText:
+                // OLE-путь WPF (SetText → Flush) взаимно блокируется с агентами буфера VDI
+                // (Horizon/Citrix держат буфер открытым > 1 сек на каждое изменение) → CLIPBRD_E_CANT_OPEN
+                if (!TrySetClipboardTextRaw(text))
                 {
-                    try
-                    {
-                        System.Windows.Clipboard.SetText(text);
-                        Log.Debug("Текст успешно скопирован в буфер обмена");
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.Error(ex, "Ошибка при копировании текста в буфер обмена");
-                        throw;
-                    }
-                });
+                    throw new InvalidOperationException(
+                        "Не удалось скопировать текст в буфер обмена: буфер занят другим процессом (подробности в логе).");
+                }
+                Log.Debug("Текст успешно скопирован в буфер обмена");
                 
                 // Дополнительная задержка перед вставкой
                 await Task.Delay(200);
@@ -178,6 +207,103 @@ namespace LWhisper.UI.WPF.Services
                 
                 Log.Information("Вставка текста завершена (использованы 3 метода)");
             });
+        }
+
+        /// <summary>
+        /// Кладёт текст в буфер обмена через сырой WinAPI (CF_UNICODETEXT) с ретраями на OpenClipboard.
+        /// Данные пишутся сразу, без OLE delayed rendering — агенту синхронизации буфера (VDI)
+        /// не нужен обратный вызов в наш процесс, взаимная блокировка невозможна.
+        /// </summary>
+        internal static bool TrySetClipboardTextRaw(string text)
+        {
+            var hGlobal = GlobalAlloc(GMEM_MOVEABLE, (UIntPtr)((text.Length + 1) * 2));
+            if (hGlobal == IntPtr.Zero)
+            {
+                Log.Error("GlobalAlloc не выделил память под текст ({Length} символов), Win32Error={Error}",
+                    text.Length, Marshal.GetLastWin32Error());
+                return false;
+            }
+
+            var ptr = GlobalLock(hGlobal);
+            if (ptr == IntPtr.Zero)
+            {
+                Log.Error("GlobalLock не заблокировал память, Win32Error={Error}", Marshal.GetLastWin32Error());
+                GlobalFree(hGlobal);
+                return false;
+            }
+
+            try
+            {
+                Marshal.Copy(text.ToCharArray(), 0, ptr, text.Length);
+                Marshal.WriteInt16(ptr, text.Length * 2, 0); // null-терминатор
+            }
+            finally
+            {
+                GlobalUnlock(hGlobal);
+            }
+
+            for (int attempt = 1; attempt <= CLIPBOARD_OPEN_RETRY_COUNT; attempt++)
+            {
+                if (OpenClipboard(IntPtr.Zero))
+                {
+                    try
+                    {
+                        EmptyClipboard();
+                        if (SetClipboardData(CF_UNICODETEXT, hGlobal) != IntPtr.Zero)
+                        {
+                            hGlobal = IntPtr.Zero; // владение памятью перешло системе
+                            return true;
+                        }
+                        Log.Error("SetClipboardData вернул NULL, Win32Error={Error}", Marshal.GetLastWin32Error());
+                    }
+                    finally
+                    {
+                        CloseClipboard();
+                    }
+                    break; // буфер открылся, но записать не удалось — ретраи не помогут
+                }
+
+                if (attempt < CLIPBOARD_OPEN_RETRY_COUNT)
+                {
+                    Log.Debug("OpenClipboard занят (попытка {Attempt}/{Total}), ожидание {Delay}мс...",
+                        attempt, CLIPBOARD_OPEN_RETRY_COUNT, CLIPBOARD_OPEN_RETRY_DELAY_MS);
+                    Thread.Sleep(CLIPBOARD_OPEN_RETRY_DELAY_MS);
+                }
+                else
+                {
+                    LogClipboardHolder();
+                }
+            }
+
+            if (hGlobal != IntPtr.Zero)
+            {
+                GlobalFree(hGlobal);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Логирует процесс, который держит буфер обмена открытым (диагностика для VDI/DLP-агентов)
+        /// </summary>
+        private static void LogClipboardHolder()
+        {
+            var holderWindow = GetOpenClipboardWindow();
+            uint holderPid = 0;
+            var holderName = "неизвестен";
+            if (holderWindow != IntPtr.Zero)
+            {
+                GetWindowThreadProcessId(holderWindow, out holderPid);
+                try
+                {
+                    holderName = System.Diagnostics.Process.GetProcessById((int)holderPid).ProcessName;
+                }
+                catch
+                {
+                    // процесс успел завершиться — оставляем "неизвестен"
+                }
+            }
+            Log.Error("Буфер обмена занят: OpenClipboard не открылся за {Total} попыток. Держатель: {Process} (hwnd={Handle}, pid={Pid})",
+                CLIPBOARD_OPEN_RETRY_COUNT, holderName, holderWindow, holderPid);
         }
 
         private void SendCtrlV()

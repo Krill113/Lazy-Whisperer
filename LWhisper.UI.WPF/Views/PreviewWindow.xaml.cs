@@ -147,7 +147,13 @@ namespace LWhisper.UI.WPF.Views
 
         private void CopyButton_Click(object sender, RoutedEventArgs e)
         {
-            Clipboard.SetText(TextBox.Text);
+            // Сырой WinAPI вместо WPF Clipboard.SetText — OLE-путь блокируется VDI-агентами буфера
+            // (CLIPBRD_E_CANT_OPEN), а необработанное исключение здесь роняло бы всё приложение
+            if (!Services.WindowsTextInjector.TrySetClipboardTextRaw(TextBox.Text))
+            {
+                MessageBox.Show("Не удалось скопировать: буфер обмена занят другим процессом.",
+                    "LWhisper", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
 
         private void InsertButton_Click(object sender, RoutedEventArgs e)
