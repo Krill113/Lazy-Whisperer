@@ -269,13 +269,29 @@ namespace LWhisper.SpeechEngine
 
             try
             {
-                // PERF-04 EXPERIMENTAL: динамический расчёт AudioContextSize
-                // Дефолт = 1500 (рассчитан на 30 сек). Для коротких сегментов streaming mode это избыточно.
-                // Формула: (duration_sec / 30.0) * 1500, округление вверх до кратного 64, минимум 256
+                // C1 (CP5): окно энкодера. Формула и floor — WhisperTuning (D7: константы движка, не в Core).
+                // Дефолтный floor 448; LWHISPER_AUDIO_CTX_FLOOR переопределяет его без пересборки,
+                // значение 0 — kill-switch (WithAudioContextSize не вызывается вовсе).
+                // Guard: при language=auto окно не сужаем — детект языка идёт на полном окне (спека §3.1).
                 var durationSec = audioData.Duration.TotalSeconds;
-                var rawContextSize = (int)Math.Ceiling((durationSec / 30.0) * 1500);
-                var alignedContextSize = ((rawContextSize + 63) / 64) * 64; // округление вверх до кратного 64
-                var audioContextSize = Math.Max(256, alignedContextSize);
+                var audioContextFloor = WhisperTuning.AudioContextFloor;
+                var isAutoLanguage = string.Equals(_language, "auto", StringComparison.OrdinalIgnoreCase);
+                var audioContextSize = isAutoLanguage
+                    ? 0
+                    : WhisperTuning.ComputeAudioContextSize(durationSec, audioContextFloor);
+
+                // Предохранитель полного окна. whisper.cpp отвергает audio_ctx больше n_audio_ctx (1500)
+                // кодом -5, а -5 уходит в общий catch и запускает аварийный fallback — то самое,
+                // что спека §5 (правило 4) объявляет невалидным замером. Значение >= 1500 при этом
+                // не даёт выигрыша ни при каком раскладе, поэтому окно просто не сужается.
+                // В приложении недостижимо (MaxSegmentDurationMs=15000 -> максимум 768),
+                // но на стенде DevTools на вход может прийти файл длиннее 30 с.
+                var overFullWindow = audioContextSize >= WhisperTuning.FullWindowContext;
+                if (overFullWindow) audioContextSize = 0;
+
+                var ctxReason = isAutoLanguage ? "auto-language"
+                    : overFullWindow ? "over-window"
+                    : audioContextSize == 0 ? "kill-switch" : "floor";
 
                 // P3: значения фиксируются ДО построения builder'а и печатаются в том виде,
                 // в каком уходят в native — иначе свипы CP2/CP3 нечем верифицировать.
@@ -283,8 +299,19 @@ namespace LWhisper.SpeechEngine
                 var streamingThreads = Environment.ProcessorCount;
                 var useBeamSearch = _settings?.UseBeamSearch == true;
 
-                Log.Debug("Streaming recognition: duration={Duration:F1}s, audioContextSize={ContextSize} (raw={RawSize}), threads={Threads}, beam={Beam}",
-                    durationSec, audioContextSize, rawContextSize, streamingThreads, useBeamSearch);
+                Log.Debug("Streaming recognition: duration={Duration:F1}s, audioContextSize={ContextSize}, " +
+                    "ctxReason={CtxReason}, floor={Floor}, threads={Threads}, beam={Beam}",
+                    durationSec, audioContextSize, ctxReason, audioContextFloor, streamingThreads, useBeamSearch);
+
+                if (overFullWindow)
+                {
+                    // Штатно недостижимо при MaxSegmentDurationMs=15000 (максимум 768). Если строка
+                    // появилась — на вход пришёл кусок длиннее 30 с (сегментация или файл со стенда).
+                    // Окно НЕ сужается: см. предохранитель в шаге 1а.
+                    Log.Warning("Расчётный AudioContextSize >= полного окна {Full} при duration={Duration:F1}s — " +
+                        "сужение окна не применяется (ctxReason=over-window)",
+                        WhisperTuning.FullWindowContext, durationSec);
+                }
 
                 // CP1: мета дампа берёт ровно те значения, что ушли в native — те же локальные
                 // переменные, что и лог выше (их завёл CP0). Второго источника истины нет.
@@ -302,9 +329,16 @@ namespace LWhisper.SpeechEngine
                     .WithLanguage(_language)
                     .WithNoContext()
                     .WithSingleSegment()
-                    .WithThreads(streamingThreads)
-                    // PERF-04 EXPERIMENTAL: уменьшенное контекстное окно для коротких сегментов
-                    .WithAudioContextSize(audioContextSize);
+                    .WithThreads(streamingThreads);
+
+                // C1 (CP5): ctx == 0 -> WithAudioContextSize не вызывается вовсе
+                // (kill-switch LWHISPER_AUDIO_CTX_FLOOR=0, language=auto либо over-window).
+                // Урок W1: снятие явного параметра — тоже изменение поведения, поэтому это явная ветка,
+                // а не «просто не передаём».
+                if (audioContextSize > 0)
+                {
+                    streamingBuilder = streamingBuilder.WithAudioContextSize(audioContextSize);
+                }
 
                 // D5: vocabulary через WithPrompt — биас Whisper на доменную лексику
                 if (_initialPrompt != null)
