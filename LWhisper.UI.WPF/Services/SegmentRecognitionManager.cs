@@ -31,14 +31,46 @@ namespace LWhisper.UI.WPF.Services
         /// </summary>
         /// <param name="recognizer">Распознаватель речи</param>
         /// <param name="maxParallelTasks">Максимальное количество параллельных задач</param>
-        public SegmentRecognitionManager(ISpeechRecognizer recognizer, int maxParallelTasks = 3)
+        /// <param name="settings">
+        /// Настройки потокового режима. Отсюда берутся пороги фильтрации: амплитудный и
+        /// compression-ratio. null = дефолты <see cref="StreamingSettings"/>.
+        /// Раньше оба порога были захардкожены здесь, из-за чего объявленный
+        /// <c>StreamingSettings.CompressionRatioThreshold</c> был мёртвым: он лежал в settings.json,
+        /// но на поведение не влиял.
+        /// </param>
+        public SegmentRecognitionManager(ISpeechRecognizer recognizer, int maxParallelTasks = 3,
+            StreamingSettings? settings = null)
         {
             _recognizer = recognizer ?? throw new ArgumentNullException(nameof(recognizer));
             _parallelismLimit = new SemaphoreSlim(maxParallelTasks, maxParallelTasks);
             _cancellationTokenSource = new CancellationTokenSource();
-            
-            Log.Information("SegmentRecognitionManager инициализирован с параллелизмом={Parallel}", maxParallelTasks);
+
+            var effective = settings ?? new StreamingSettings();
+            _silenceMaxAmplitudeThreshold = effective.SilenceMaxAmplitudeThreshold;
+            _compressionRatioThreshold = effective.CompressionRatioThreshold;
+
+            Log.Information("SegmentRecognitionManager инициализирован с параллелизмом={Parallel}, " +
+                "порог тишины={Silence:F4}, порог compression-ratio={Compression:F1}",
+                maxParallelTasks, _silenceMaxAmplitudeThreshold, _compressionRatioThreshold);
         }
+
+        /// <summary>Порог максимальной амплитуды: ниже — сегмент не отправляется в движок.</summary>
+        private readonly double _silenceMaxAmplitudeThreshold;
+
+        /// <summary>Порог compression-ratio для отбраковки повторяющегося мусора после dedup'ов.</summary>
+        private readonly double _compressionRatioThreshold;
+
+        private int _skippedSilentCount;
+
+        /// <summary>
+        /// Сколько сегментов текущей записи отброшено амплитудным гейтом как тишина/шум.
+        /// Нужно, чтобы пользователю можно было назвать ПРИЧИНУ пустого результата, а не молча
+        /// закрыть окно предпросмотра.
+        /// </summary>
+        public int SkippedSilentCount => Volatile.Read(ref _skippedSilentCount);
+
+        /// <summary>Сколько сегментов вообще дошло до менеджера в текущей записи.</summary>
+        public int ReceivedSegmentCount => Volatile.Read(ref _segmentCounter);
 
         /// <summary>
         /// Добавить сегмент в очередь на распознавание
@@ -55,9 +87,13 @@ namespace LWhisper.UI.WPF.Services
 
             // Проверка переполнения очереди
             int activeCount;
+            // Считаем только НЕзавершённые задачи: _activeTasks очищается лишь в Reset(), поэтому
+            // _activeTasks.Count — это все сегменты с начала записи, а не текущая очередь.
+            // Из-за этого предупреждение ниже срабатывало на любой длинной диктовке при пустой
+            // очереди (замер 2026-08-11: реальное ожидание на каждом сегменте было wait=0мс).
             lock (_lockObj)
             {
-                activeCount = _activeTasks.Count;
+                activeCount = _activeTasks.Count(t => !t.IsCompleted);
             }
 
             if (activeCount > 10)
@@ -87,14 +123,15 @@ namespace LWhisper.UI.WPF.Services
                     Log.Debug("[Segment #{Id}] Амплитуда: средняя={Avg:F4}, максимальная={Max:F4}", 
                         segmentId, avgAmplitude, maxAmplitude);
                     
-                    // Фильтрация на основе МАКСИМАЛЬНОЙ амплитуды (пики в речи)
-                    // Порог 0.03 - реальная речь обычно дает пики > 0.05-0.1
-                    // Фоновый шум редко превышает 0.01-0.02
-                    if (maxAmplitude < 0.03)
+                    // Фильтрация на основе МАКСИМАЛЬНОЙ амплитуды (пики в речи).
+                    // Дефолт 0.03: реальная речь обычно даёт пики > 0.05-0.1, фоновый шум
+                    // редко превышает 0.01-0.02. Порог настраиваемый — см. StreamingSettings.
+                    if (maxAmplitude < _silenceMaxAmplitudeThreshold)
                     {
+                        Interlocked.Increment(ref _skippedSilentCount);
                         Log.Debug("[Segment #{Id}] Сегмент содержит только тишину/фоновый шум " +
-                            "(средняя={Avg:F6}, макс={Max:F6}), пропускается",
-                            segmentId, avgAmplitude, maxAmplitude);
+                            "(средняя={Avg:F6}, макс={Max:F6}, порог={Threshold:F4}), пропускается",
+                            segmentId, avgAmplitude, maxAmplitude, _silenceMaxAmplitudeThreshold);
                         return new RecognitionResult { Success = true, Text = string.Empty };
                     }
                     
@@ -135,12 +172,11 @@ namespace LWhisper.UI.WPF.Services
                             // D6: compression-ratio detector — safety net ПОСЛЕ dedup'ов.
                             // Простые повторы должны быть схлопнуты выше (CollapsePhraseRepeats/RemoveIntraSegmentDuplicates).
                             // Если ratio всё ещё высокий — это дикая галлюцинация, которую не вытащили regex'ы → дроп.
-                            const double CompressionThreshold = 2.4;  // дефолт OpenAI Whisper
                             var compressionRatio = GetCompressionRatio(cleanedText);
-                            if (compressionRatio >= CompressionThreshold)
+                            if (compressionRatio >= _compressionRatioThreshold)
                             {
                                 Log.Information("[Segment #{Id}] Высокий compression-ratio {Ratio:F2} ≥ {Threshold:F1} после dedup'ов, дроп сегмента: \"{Text}\"",
-                                    segmentId, compressionRatio, CompressionThreshold, cleanedText.Length > 100 ? cleanedText.Substring(0, 100) + "..." : cleanedText);
+                                    segmentId, compressionRatio, _compressionRatioThreshold, cleanedText.Length > 100 ? cleanedText.Substring(0, 100) + "..." : cleanedText);
                                 AudioDumpSink.RecordPostFilterText(segmentId, string.Empty);
                                 return new RecognitionResult { Success = true, Text = string.Empty };
                             }
@@ -283,6 +319,7 @@ namespace LWhisper.UI.WPF.Services
                 _activeTasks.Clear();
                 _recognizedSegments.Clear();
                 _segmentCounter = 0;
+                _skippedSilentCount = 0;
             }
 
             Log.Debug("SegmentRecognitionManager сброшен");
