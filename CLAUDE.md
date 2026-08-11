@@ -144,7 +144,9 @@ Desktop Windows-приложение для офлайн голосового в
 - `MaxSegmentDurationMs` — Default 15000ms (max segment length)
 - `AutoStopOnLongPause` — Default false
 - `AutoStopPauseDurationMs` — Default 3000ms
-- `MaxParallelRecognitions` — Default 3 (concurrent Whisper recognition tasks)
+- `MaxParallelRecognitions` — Default 3 (concurrent Whisper recognition tasks; clipped to 2 in CPU-only mode)
+- `CompressionRatioThreshold` — Default 2.4 (gzip ratio above which a segment is dropped as repetitive garbage)
+- `SilenceMaxAmplitudeThreshold` — Default 0.03 (peak amplitude below which a segment is treated as silence and never reaches the engine)
 - Solution uses Debug|Any CPU, Debug|x64, Debug|x86, Release variants
 - Release build script: `build-release.bat` — Publishes self-contained win-x64 single-file executable
 ## Platform Requirements

@@ -45,6 +45,8 @@ LWhisper.DevTools.exe <command> [options]
 | `--threads <int>` | число потоков | формула `WhisperTuning` |
 | `--thread-mode <legacy\|divided>` | режим бюджета потоков | `legacy` |
 | `--beam` | beam search вместо greedy | выкл (greedy) |
+| `--prompt <текст>` | подсказка Whisper (`WithPrompt`) | без подсказки |
+| `--prompt-file <путь>` | то же, текст берётся из файла **дословно** (UTF-8, обрезаются только крайние пробелы) | без подсказки |
 | `--parallel <int>` | параллельных распознаваний | `1` |
 | `--repeat <int>` | прогонов на файл | `1` |
 | `--out <dir>` | каталог отчётов | `docs/superpowers/measurements/{yyyyMMdd-HHmmss}`, если корень репозитория не найден — `{DebugRoot}/reports/{yyyyMMdd-HHmmss}` |
@@ -152,7 +154,7 @@ claude mcp add lwhisper-transcribe --scope user -- "<АБСОЛЮТНЫЙ пут
 > (`--max-duration`, здесь не настраивается) и файл `session.wav` инструментом не обрабатываются —
 > оба отбрасываются на этапе отбора корпуса с ошибкой инструмента. Используйте `seg-*.wav`.
 | `sweep` | `paths[]`, опц. `ctxFloors[]`, `threads[]`, `beam[]`, `repeat`, `parallel`, `reportDir`, `maxRuns` | `reportJsonPath`, `reportMarkdownPath`, `summary` |
-| `engine_info` | `{}` | конфигурация движка: модель, язык, `processorCount`, `defaultThreads`, `ctxFloorDefault`, `threadMode`, `whisperNet`, `runtimeInfo`, `gpu`, `dumpEnabled`, `dumpDirectory` |
+| `engine_info` | `{}` | конфигурация движка: модель, язык, `processorCount`, `defaultThreads`, `ctxFloorDefault`, `threadMode`, `whisperNet`, `runtimeInfo`, `gpu`, `dumpEnabled`, `dumpDirectory`, `promptChars` |
 
 Правила режима:
 - в `mcp` stdout занят JSON-RPC: console-логи отключены, лог пишется в `{DebugRoot}/mcp/log-*.txt`;
