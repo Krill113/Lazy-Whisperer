@@ -29,6 +29,15 @@ public sealed record CliOptions
 
     public string ThreadMode { get; init; } = DefaultThreadMode;
     public bool Beam { get; init; }
+
+    /// <summary>
+    /// Подсказка Whisper (<c>WithPrompt</c>), которой приложение биасит доменную лексику.
+    /// null = прогон без подсказки — историческое поведение стенда.
+    /// Нужна, чтобы стенд мог воспроизвести боевой путь: приложение всегда собирает подсказку
+    /// из vocabulary.txt, и её ФОРМАТ влияет на стиль вывода (список через запятую провоцирует
+    /// перечислительные повторы). Без этой опции A/B «с подсказкой / без» на стенде невозможен.
+    /// </summary>
+    public string? InitialPrompt { get; init; }
     public int Parallel { get; init; } = 1;
     public int Repeat { get; init; } = 1;
     public string? OutDir { get; init; }
@@ -98,6 +107,7 @@ public sealed record CliOptions
         int? threads = null;
         var threadMode = DefaultThreadMode;
         var beam = false;
+        string? initialPrompt = null;
         var parallel = 1;
         var repeat = 1;
         string? outDir = null;
@@ -123,6 +133,8 @@ public sealed record CliOptions
                 case "--threads": threads = Int(Value(args, ref i, a), a, 1); break;
                 case "--thread-mode": threadMode = Value(args, ref i, a).ToLowerInvariant(); break;
                 case "--beam": beam = true; break;
+                case "--prompt": initialPrompt = Value(args, ref i, a); break;
+                case "--prompt-file": initialPrompt = ReadPromptFile(Value(args, ref i, a)); break;
                 case "--parallel": parallel = Int(Value(args, ref i, a), a, 1); break;
                 case "--repeat": repeat = Int(Value(args, ref i, a), a, 1); break;
                 case "--out": outDir = Value(args, ref i, a); break;
@@ -164,6 +176,7 @@ public sealed record CliOptions
             Threads = threads,
             ThreadMode = threadMode,
             Beam = beam,
+            InitialPrompt = string.IsNullOrWhiteSpace(initialPrompt) ? null : initialPrompt,
             Parallel = parallel,
             Repeat = repeat,
             OutDir = outDir,
@@ -184,6 +197,18 @@ public sealed record CliOptions
         if (i + 1 >= args.Length)
             throw new CliParseException($"Опция {option} требует значение.");
         return args[++i];
+    }
+
+    /// <summary>
+    /// Читает подсказку из файла ДОСЛОВНО (UTF-8, обрезаются только крайние пробелы/переводы строк).
+    /// Именно дословно: формат подсказки — предмет измерения, поэтому стенд не имеет права
+    /// её переупаковывать. Реплику боевой подсказки готовит вызывающий.
+    /// </summary>
+    private static string ReadPromptFile(string path)
+    {
+        if (!File.Exists(path))
+            throw new CliParseException($"Опция --prompt-file: файл не найден: '{path}'.");
+        return File.ReadAllText(path, Encoding.UTF8).Trim();
     }
 
     private static int Int(string raw, string option, int min)
@@ -240,6 +265,8 @@ public sealed record CliOptions
         sb.AppendLine($"  --ctx-floor <int>           0 = не вызывать WithAudioContextSize; по умолчанию {DefaultCtxFloor}");
         sb.AppendLine("  --threads <int>             по умолчанию — формула движка");
         sb.AppendLine($"  --thread-mode <legacy|divided>  по умолчанию {DefaultThreadMode}");
+        sb.AppendLine("  --prompt <текст>                подсказка Whisper (WithPrompt); по умолчанию без подсказки");
+        sb.AppendLine("  --prompt-file <путь>            то же, но текст берётся из файла дословно (UTF-8)");
         sb.AppendLine("  --beam                      включить beam search (по умолчанию greedy)");
         sb.AppendLine("  --parallel <int>            число параллельных распознаваний, по умолчанию 1");
         sb.AppendLine("  --repeat <int>              прогонов на файл, по умолчанию 1");

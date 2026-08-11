@@ -40,6 +40,13 @@ public sealed class EngineInfo
     public bool DumpEnabled { get; set; }
     public string? DumpDirectory { get; set; }
 
+    /// <summary>
+    /// Длина подсказки Whisper (--prompt/--prompt-file) в символах; 0 = прогон без подсказки.
+    /// В отчёте обязателен: тексты плеча с подсказкой и без несравнимы, а по одному транскрипту
+    /// это неотличимо.
+    /// </summary>
+    public int PromptChars { get; set; }
+
     public static EngineInfo Collect(CliOptions options, string modelPath, string? runtimeInfo)
     {
         return new EngineInfo
@@ -67,7 +74,8 @@ public sealed class EngineInfo
             RuntimeInfo = runtimeInfo ?? "",
             Gpu = false,
             DumpEnabled = AudioDumpSink.Enabled,
-            DumpDirectory = AudioDumpSink.Enabled ? AudioDumpSink.SessionDirectory : null
+            DumpDirectory = AudioDumpSink.Enabled ? AudioDumpSink.SessionDirectory : null,
+            PromptChars = options.InitialPrompt?.Length ?? 0
         };
     }
 

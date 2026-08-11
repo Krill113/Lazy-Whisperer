@@ -106,7 +106,7 @@ public static class Program
 
         try
         {
-            using var runner = new TranscribeRunner(modelPath, options.Language, gpu: false, fallbackWatch);
+            using var runner = new TranscribeRunner(modelPath, options.Language, gpu: false, fallbackWatch, options.InitialPrompt);
             var report = await runner.RunAsync(options);
             var (jsonPath, markdownPath) = ReportWriter.Write(report, outDir, options.Format);
             PrintSummary(report, jsonPath, markdownPath);

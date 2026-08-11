@@ -61,7 +61,10 @@ public sealed class TranscribeRunner : IDisposable
     /// </summary>
     // C2 (CP6): параллелизм задаётся конструктором распознавателя и влияет на ResolveThreads(),
     // поэтому он часть ключа — иначе прогон с --parallel 3 получил бы движок, прогретый под 1.
-    private readonly Dictionary<(string Model, string Language, bool Beam, int Parallelism), WhisperSpeechRecognizer> _engines = new();
+    // Подсказка входит в ключ: движок кэшируется прогретым, а WithPrompt применяется при построении
+    // процессора — плечо с другой подсказкой обязано получить свой экземпляр, иначе A/B «с подсказкой /
+    // без» молча сравнивал бы одно и то же.
+    private readonly Dictionary<(string Model, string Language, bool Beam, int Parallelism, string Prompt), WhisperSpeechRecognizer> _engines = new();
     private bool _disposed;
 
     public TranscribeRunner(string modelPath, string language, bool gpu = false)
@@ -69,13 +72,16 @@ public sealed class TranscribeRunner : IDisposable
     {
     }
 
-    public TranscribeRunner(string modelPath, string language, bool gpu, FallbackWatchSink? fallbackWatch)
+    public TranscribeRunner(string modelPath, string language, bool gpu, FallbackWatchSink? fallbackWatch, string? initialPrompt = null)
     {
         _modelPath = modelPath ?? throw new ArgumentNullException(nameof(modelPath));
         _language = string.IsNullOrWhiteSpace(language) ? CliOptions.DefaultLanguage : language;
         _gpu = gpu;
         _fallbackWatch = fallbackWatch;
+        _initialPrompt = string.IsNullOrWhiteSpace(initialPrompt) ? null : initialPrompt;
     }
+
+    private readonly string? _initialPrompt;
 
     /// <summary>
     /// Возвращает прогретый распознаватель для плеча. Вызовы RunAsync сериализованы снаружи
@@ -83,7 +89,7 @@ public sealed class TranscribeRunner : IDisposable
     /// </summary>
     private async Task<WhisperSpeechRecognizer> GetOrCreateRecognizerAsync(bool beam, int effectiveParallelism)
     {
-        var key = (_modelPath, _language, beam, effectiveParallelism);
+        var key = (_modelPath, _language, beam, effectiveParallelism, _initialPrompt ?? "");
         if (_engines.TryGetValue(key, out var cached)) return cached;
 
         var settings = new StreamingSettings { UseBeamSearch = beam };
@@ -91,7 +97,7 @@ public sealed class TranscribeRunner : IDisposable
         // иначе режим divided на стенде и в приложении считал бы разный бюджет.
         var recognizer = new WhisperSpeechRecognizer(
             _modelPath, _language, gpuFailed: !_gpu, settings: settings,
-            initialPrompt: null, effectiveParallelism: effectiveParallelism);
+            initialPrompt: _initialPrompt, effectiveParallelism: effectiveParallelism);
         try
         {
             await recognizer.InitializeAsync();
@@ -104,8 +110,9 @@ public sealed class TranscribeRunner : IDisposable
         }
 
         _engines[key] = recognizer;
-        Log.Information("Движок прогрет: модель {Model}, язык {Language}, beam {Beam}",
-            Path.GetFileName(_modelPath), _language, beam);
+        Log.Information("Движок прогрет: модель {Model}, язык {Language}, beam {Beam}, подсказка {Prompt}",
+            Path.GetFileName(_modelPath), _language, beam,
+            _initialPrompt == null ? "нет" : $"{_initialPrompt.Length} символов");
         return recognizer;
     }
 

@@ -48,6 +48,7 @@ public static class ReportWriter
         sb.AppendLine($"- **Whisper.net:** {Md(e.WhisperNet)}");
         sb.AppendLine($"- **Runtime:** {Md(string.IsNullOrWhiteSpace(e.RuntimeInfo) ? "—" : e.RuntimeInfo)}");
         sb.AppendLine($"- **Дамп аудио (LWHISPER_DEBUG_AUDIO):** {(e.DumpEnabled ? "включён → " + Md(e.DumpDirectory ?? "") : "выключен")}");
+        sb.AppendLine($"- **Подсказка Whisper (--prompt):** {(e.PromptChars > 0 ? e.PromptChars.ToString(c) + " символов" : "нет")}");
         sb.AppendLine($"- **Начало (UTC):** {Md(report.StartedUtc)}");
         sb.AppendLine($"- **Конец (UTC):** {Md(report.FinishedUtc)}");
         sb.AppendLine($"- **schemaVersion:** {report.SchemaVersion.ToString(c)}");
