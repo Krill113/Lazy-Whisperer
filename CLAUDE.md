@@ -22,7 +22,7 @@ build-release.bat Release
 build-release.bat Debug
 ```
 
-No test framework is currently configured — there are no unit tests.
+Unit tests live in `LWhisper.Tests` (xUnit): pure formulas, parsers and text filters only. Native Whisper behaviour is not covered by tests — it is verified by manual smoke and by `LWhisper.DevTools` runs on a WAV corpus. Run them with `dotnet test LWhisper.Tests/LWhisper.Tests.csproj`.
 
 ## Architecture
 
@@ -50,6 +50,28 @@ All user data lives in `%APPDATA%\LWhisper\`:
 - `settings.json` — app configuration (managed by `SettingsManager`)
 - `Models\ggml-{size}.bin` — Whisper model files (downloaded on-demand via Settings UI)
 - `logs\log-*.txt` — Serilog daily rotation, 10MB limit, 7-day retention
+- `debug\{session}\` — audio dumps, created only when `LWHISPER_DEBUG_AUDIO` is on (see below)
+
+## DevTools & MCP (offline measurement bench)
+
+`LWhisper.DevTools` (net8.0 console) runs the **production** `LWhisper.SpeechEngine` pipeline over WAV files — no UI, no microphone. One code path, two faces:
+
+- CLI: `transcribe`, `sweep` (parameter grid → `report.json` + `report.md`), `engine-info`.
+- MCP server over stdio: `LWhisper.DevTools.exe mcp` (NuGet `ModelContextProtocol`), tools `transcribe`, `sweep`, `engine_info`. Register once: `claude mcp add lwhisper-transcribe --scope user -- "<abs path>\LWhisper.DevTools.exe" mcp`. In this mode stdout carries JSON-RPC only — no console logging, no `Console.WriteLine`.
+
+Full option list, report schema and privacy notes: `LWhisper.DevTools/README.md`.
+
+### Tuning / debug environment variables
+
+Read **only** in `LWhisper.SpeechEngine`, one place per variable. Absent variable = production behaviour; an applied override is logged once at `Information` level with the word `override`. Nothing tuning-related lives in `LWhisper.Core` — engine-specific settings must not leak into `settings.json`.
+
+| Variable | Values | Default | Meaning |
+|---|---|---|---|
+| `LWHISPER_DEBUG_AUDIO` | `1`/`true`/`yes`/`on` | off | dump segment/session PCM + `meta.jsonl` |
+| `LWHISPER_DEBUG_AUDIO_DIR` | absolute path | `%APPDATA%\LWhisper\debug` | dump root |
+| `LWHISPER_AUDIO_CTX_FLOOR` | int ≥ 0, `0` = never call `WithAudioContextSize` | `448` | encoder context floor |
+| `LWHISPER_THREAD_MODE` | `legacy` \| `divided` | `legacy` | thread budget mode |
+| `LWHISPER_WHISPER_THREADS` | int > 0 | unset | hard thread-count override |
 
 ## Key Dependencies
 
