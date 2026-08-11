@@ -59,9 +59,9 @@ LWhisper.DevTools.exe <command> [options]
 
 | Опция | Значение | По умолчанию |
 |---|---|---|
-| `--grid-ctx <csv>` | напр. `0,256,448,768` | `448` |
+| `--grid-ctx <csv>` | напр. `0,256,448,768` | значение `--ctx-floor` (одно плечо) |
 | `--grid-threads <csv>` | напр. `4,6,8` | один прогон на формуле |
-| `--grid-beam <csv>` | `false,true` | `false` |
+| `--grid-beam <csv>` | `false,true` | значение `--beam` (одно плечо) |
 | `--baseline <report.json>` | сравнить тексты и метрики с предыдущим отчётом | — |
 | `--max-runs <int>` | предохранитель | `200` (превышение = выход с кодом 2) |
 
@@ -86,9 +86,13 @@ $devtools = ".\LWhisper.DevTools\bin\Release\net8.0\LWhisper.DevTools.exe"
 & $devtools sweep --input "$env:APPDATA\LWhisper\debug\20260812-101500" `
                   --grid-ctx 0,256,384,448,512,768 --repeat 3 --max-runs 400 --tag ctx-floor-ab
 
-# A/B бюджета потоков (15 файлов × 3 плеча × 3 повтора = 135 — в дефолт 200 укладывается)
+# A/B бюджета потоков. ВАЖНО: --thread-mode divided действует только когда число потоков НЕ задано
+# явно — --threads/--grid-threads всегда жёсткий override, и режим тогда игнорируется. Поэтому здесь
+# НЕТ --grid-threads: сравниваются два отдельных прогона с разным --parallel при divided/legacy.
 & $devtools sweep --input "$env:APPDATA\LWhisper\debug\20260812-101500" `
-                  --grid-threads 4,6,8 --thread-mode divided --repeat 3 --tag threads-ab
+                  --thread-mode divided --parallel 3 --repeat 3 --tag threads-divided-p3
+& $devtools sweep --input "$env:APPDATA\LWhisper\debug\20260812-101500" `
+                  --thread-mode legacy --parallel 3 --repeat 3 --tag threads-legacy-p3
 
 # сравнение с предыдущим отчётом (посимвольная сверка текстов)
 & $devtools sweep --input .\corpus --grid-ctx 448 --baseline .\docs\superpowers\measurements\20260812-101500\report.json
@@ -118,6 +122,16 @@ powershell.exe -ExecutionPolicy Bypass -File .\LWhisper.DevTools\tools\make-fixt
 **пайплайн**, а не качество распознавания. Команды `make-fixture` в CLI нет намеренно —
 иначе проект пришлось бы переводить на `net8.0-windows`.
 
+### Смоук MCP-режима
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\LWhisper.DevTools\tools\mcp-smoke.ps1 `
+    -Exe .\LWhisper.DevTools\bin\Release\net8.0\LWhisper.DevTools.exe -Fixture $fx\ru-short-01.wav
+```
+
+Как и `make-fixture.ps1`, запускать через `powershell.exe` (Windows PowerShell 5.1) — файл сохранён
+с BOM специально под этот раннер.
+
 ## MCP-режим
 
 Тот же пайплайн, доступный ассистенту по stdio (пакет `ModelContextProtocol`).
@@ -133,6 +147,10 @@ claude mcp add lwhisper-transcribe --scope user -- "<АБСОЛЮТНЫЙ пут
 | tool | вход | выход |
 |---|---|---|
 | `transcribe` | `path`, опц. `language`, `ctxFloor`, `threads`, `threadMode`, `beam`, `model` | `text`, `durationMs`, `elapsedMs`, `rtf`, `audioContextSize`, `threads`, `beam`, `usedFallback` |
+
+> `transcribe` наследует ограничения CLI-предохранителей и не даёт их поднять: файлы длиннее 30 с
+> (`--max-duration`, здесь не настраивается) и файл `session.wav` инструментом не обрабатываются —
+> оба отбрасываются на этапе отбора корпуса с ошибкой инструмента. Используйте `seg-*.wav`.
 | `sweep` | `paths[]`, опц. `ctxFloors[]`, `threads[]`, `beam[]`, `repeat`, `parallel`, `reportDir`, `maxRuns` | `reportJsonPath`, `reportMarkdownPath`, `summary` |
 | `engine_info` | `{}` | конфигурация движка: модель, язык, `processorCount`, `defaultThreads`, `ctxFloorDefault`, `threadMode`, `whisperNet`, `runtimeInfo`, `gpu`, `dumpEnabled`, `dumpDirectory` |
 
@@ -149,6 +167,12 @@ claude mcp add lwhisper-transcribe --scope user -- "<АБСОЛЮТНЫЙ пут
 | Переменная | Значения | Дефолт | Смысл |
 |---|---|---|---|
 | `LWHISPER_DEBUG_AUDIO` | `1`/`true`/`yes`/`on`, прочее = выкл | выкл | дамп PCM сегментов, сессии и метаданных |
+
+> DevTools принудительно гасит `LWHISPER_DEBUG_AUDIO` для своего процесса, даже если переменная
+> унаследована из окружения (владелец диктует корпус с этим флагом и тем же окружением запускает
+> стенд) — иначе дамп писался бы ВНУТРИ измеряемого окна и портил замер. Следствие: `engine-info`
+> и `engine_info` (MCP) стенда всегда показывают `dumpEnabled: false`, поле `dumpDirectory`
+> отсутствует. Дамп пишет только приложение (`LWhisper.UI.WPF`), не стенд.
 | `LWHISPER_DEBUG_AUDIO_DIR` | абсолютный путь | `%APPDATA%\LWhisper\debug` | корень дампов |
 | `LWHISPER_AUDIO_CTX_FLOOR` | целое ≥ 0; `0` = не вызывать `WithAudioContextSize` | `448` | пол окна энкодера |
 | `LWHISPER_THREAD_MODE` | `legacy` \| `divided` | `legacy` | режим бюджета потоков |

@@ -1,4 +1,4 @@
-<#
+﻿<#
     Неинтерактивный смоук MCP-режима LWhisper.DevTools.
     Проверяет: (1) handshake initialize, (2) список инструментов, (3) чистоту stdout,
     (4) реальный вызов transcribe на TTS-фикстуре с проверкой поля usedFallback,
