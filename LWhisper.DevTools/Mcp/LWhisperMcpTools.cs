@@ -47,8 +47,9 @@ public sealed class LWhisperMcpTools
                 ElapsedMs = run.ElapsedMs,
                 Rtf = run.Rtf,
                 AudioContextSize = run.AudioContextSize,
-                // RunRecord.Threads — int? (null = «считает движок», уточнение 3 CP2),
-                // а схема §5.4 требует число: подставляем разрешённое значение из EngineInfo.
+                // RunRecord.Threads — int? (заполняется разрешённым значением всегда; null остаётся
+                // только у отчётов, сериализованных до этой правки). Схема §5.4 требует число —
+                // на такой случай подстраховка через EngineInfo.DefaultThreads.
                 Threads = run.Threads ?? report.Engine.DefaultThreads,
                 Beam = run.Beam,
                 UsedFallback = run.UsedFallback

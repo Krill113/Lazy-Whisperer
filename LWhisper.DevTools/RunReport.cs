@@ -9,19 +9,28 @@ public sealed class RunRecord
     public string FileSha256 { get; set; } = "";
     public double DurationMs { get; set; }
 
-    /// <summary>Имя плеча, например ctx=448,threads=auto,beam=false</summary>
+    /// <summary>Имя плеча, например ctx=448,threads=8,mode=legacy,beam=false</summary>
     public string Arm { get; set; } = "";
 
     public int CtxFloor { get; set; }
 
     /// <summary>
-    /// Размер окна энкодера по формуле §5.2 скелета. До CP5 движок формулу не применяет —
-    /// поле показывает ЗАПРОШЕННОЕ значение, а не фактическое (см. раздел «что работает в CP2»).
+    /// Размер окна энкодера по формуле §5.2 скелета (CP5: WhisperTuning.ComputeAudioContextSize
+    /// с обоими guard'ами движка — language=auto и over-full-window). Совпадает с фактически
+    /// применённым, поскольку TranscribeRunner.ExpectedAudioContextSize вызывается с теми же
+    /// duration/floor/language, что видит WhisperSpeechRecognizer на этом плече.
     /// </summary>
     public int AudioContextSize { get; set; }
 
-    /// <summary>null = число потоков выбирает движок (в имени плеча — threads=auto).</summary>
+    /// <summary>
+    /// Разрешённое число потоков (WhisperTuning.ComputeThreads — та же формула, что у движка).
+    /// Заполняется всегда для прогонов TranscribeRunner; null возможен только в старых отчётах
+    /// (до этой правки) при round-trip через --baseline.
+    /// </summary>
     public int? Threads { get; set; }
+
+    /// <summary>Режим бюджета потоков плеча: legacy | divided (CliOptions.ThreadMode на момент прогона).</summary>
+    public string ThreadMode { get; set; } = CliOptions.DefaultThreadMode;
 
     public bool Beam { get; set; }
     public int Parallel { get; set; }

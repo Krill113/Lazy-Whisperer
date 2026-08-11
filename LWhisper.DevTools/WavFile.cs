@@ -32,30 +32,38 @@ public static class WavFile
         var dataOffset = -1;
         var dataLength = 0;
 
-        var pos = 12;
+        // pos/body — long: чанк с size около int.MaxValue переполнил бы int-арифметику
+        // (body + size + выравнивание) и увёл бы pos в отрицательные числа, а следующая
+        // итерация упала бы на span.Slice(pos, 4) с ArgumentOutOfRangeException — необработанным
+        // и никак не связанным с текстом "испорченный WAV" из шапки файла. В long эти суммы
+        // не переполняются (size ограничен int.MaxValue), а условие цикла естественно
+        // останавливается, когда pos выходит за пределы файла.
+        long pos = 12;
         while (pos + 8 <= bytes.Length)
         {
-            var id = Ascii(span.Slice(pos, 4));
-            var size = BinaryPrimitives.ReadInt32LittleEndian(span.Slice(pos + 4, 4));
+            var posInt = (int)pos;
+            var id = Ascii(span.Slice(posInt, 4));
+            var size = BinaryPrimitives.ReadInt32LittleEndian(span.Slice(posInt + 4, 4));
             if (size < 0)
                 throw new InvalidDataException($"{sourceName}: некорректный размер чанка '{id}'.");
 
-            var body = pos + 8;
+            long body = pos + 8;
             if (id == "fmt ")
             {
                 if (size < 16 || body + 16 > bytes.Length)
                     throw new InvalidDataException($"{sourceName}: испорченный чанк fmt.");
-                var audioFormat = BinaryPrimitives.ReadInt16LittleEndian(span.Slice(body, 2));
+                var bodyInt = (int)body;
+                var audioFormat = BinaryPrimitives.ReadInt16LittleEndian(span.Slice(bodyInt, 2));
                 if (audioFormat != 1 && audioFormat != unchecked((short)0xFFFE))
                     throw new InvalidDataException($"{sourceName}: поддерживается только PCM, получен формат {audioFormat}.");
-                channels = BinaryPrimitives.ReadInt16LittleEndian(span.Slice(body + 2, 2));
-                sampleRate = BinaryPrimitives.ReadInt32LittleEndian(span.Slice(body + 4, 4));
-                bits = BinaryPrimitives.ReadInt16LittleEndian(span.Slice(body + 14, 2));
+                channels = BinaryPrimitives.ReadInt16LittleEndian(span.Slice(bodyInt + 2, 2));
+                sampleRate = BinaryPrimitives.ReadInt32LittleEndian(span.Slice(bodyInt + 4, 4));
+                bits = BinaryPrimitives.ReadInt16LittleEndian(span.Slice(bodyInt + 14, 2));
             }
             else if (id == "data")
             {
-                dataOffset = body;
-                dataLength = Math.Min(size, bytes.Length - body);
+                dataOffset = (int)body;
+                dataLength = (int)Math.Min(size, bytes.Length - body);
             }
 
             pos = body + size + (size % 2); // чанки выравнены по 2 байта

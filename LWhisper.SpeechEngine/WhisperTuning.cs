@@ -159,6 +159,17 @@ namespace LWhisper.SpeechEngine
             };
         }
 
+        /// <summary>
+        /// Разобрать строковое представление режима (например, <c>CliOptions.ThreadMode</c>) в enum.
+        /// Нераспознанное значение трактуется как Legacy — без логирования: вызывающий уже
+        /// провалидировал строку (legacy|divided). Для чтения из окружения с логом override
+        /// используйте <see cref="Mode"/>.
+        /// </summary>
+        public static ThreadBudgetMode ParseMode(string? raw)
+            => string.Equals(raw, "divided", StringComparison.OrdinalIgnoreCase)
+                ? ThreadBudgetMode.Divided
+                : ThreadBudgetMode.Legacy;
+
         private const string ThreadModeEnv = "LWHISPER_THREAD_MODE";
         private const string ThreadsOverrideEnv = "LWHISPER_WHISPER_THREADS";
 
@@ -177,7 +188,10 @@ namespace LWhisper.SpeechEngine
             switch (normalized)
             {
                 case "legacy":
-                    if (shouldLog) Log.Information("WhisperTuning: {Env} override = legacy", ThreadModeEnv);
+                    // "legacy" совпадает с дефолтом Mode — переменная присутствует (например, ранер
+                    // DevTools выставляет её на каждое плечо), но фактически ничего не переопределяет.
+                    // Строка "override" здесь вводила бы в заблуждение (закон §4 скелета).
+                    if (shouldLog) Log.Debug("WhisperTuning: {Env}=legacy совпадает с дефолтом — override не применяется", ThreadModeEnv);
                     return ThreadBudgetMode.Legacy;
                 case "divided":
                     if (shouldLog) Log.Information("WhisperTuning: {Env} override = divided", ThreadModeEnv);
@@ -269,18 +283,36 @@ namespace LWhisper.SpeechEngine
                 return DefaultAudioContextFloor;
             }
 
+            // Дедуп по прочитанной строке — тот же ShouldLogEnv, что и у остальных ридеров окружения.
+            // Без него ветка ниже логировала бы Warning на КАЖДЫЙ сегмент (свойство читается при
+            // каждом обращении — см. документацию AudioContextFloor).
+            var raw = floor.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var shouldLog = ShouldLogEnv(AudioContextFloorEnv, raw);
+
             if (floor < 0)
             {
-                Log.Warning("Переменная окружения {Name}={Floor} отрицательна — игнорируется, floor={Default}",
-                    AudioContextFloorEnv, floor, DefaultAudioContextFloor);
+                if (shouldLog)
+                    Log.Warning("Переменная окружения {Name}={Floor} отрицательна — игнорируется, floor={Default}",
+                        AudioContextFloorEnv, floor, DefaultAudioContextFloor);
                 return DefaultAudioContextFloor;
             }
 
-            if (ShouldLogEnv(AudioContextFloorEnv, floor.ToString(System.Globalization.CultureInfo.InvariantCulture)))
+            if (shouldLog)
             {
-                Log.Information("Whisper tuning override: {Name}={Floor} (дефолт {Default}){Note}",
-                    AudioContextFloorEnv, floor, DefaultAudioContextFloor,
-                    floor == 0 ? " — kill-switch: WithAudioContextSize не вызывается" : string.Empty);
+                if (floor == DefaultAudioContextFloor)
+                {
+                    // Значение совпадает с дефолтом (ранер DevTools выставляет переменную на каждое
+                    // плечо, в том числе в дефолтное значение) — это не override, слово "override"
+                    // здесь вводило бы в заблуждение (закон §4 скелета).
+                    Log.Debug("WhisperTuning: {Name}={Floor} совпадает с дефолтом — override не применяется",
+                        AudioContextFloorEnv, floor);
+                }
+                else
+                {
+                    Log.Information("Whisper tuning override: {Name}={Floor} (дефолт {Default}){Note}",
+                        AudioContextFloorEnv, floor, DefaultAudioContextFloor,
+                        floor == 0 ? " — kill-switch: WithAudioContextSize не вызывается" : string.Empty);
+                }
             }
 
             return floor;

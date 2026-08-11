@@ -21,8 +21,8 @@ public sealed class EngineInfo
     public int ProcessorCount { get; set; }
 
     /// <summary>
-    /// Сколько потоков получит движок при текущих опциях. При thread-mode=divided
-    /// фактическое число считает WhisperTuning (CP6) — здесь показано legacy-значение.
+    /// Сколько потоков получит движок при текущих опциях (options.ThreadMode/Threads/Parallel) —
+    /// та же формула WhisperTuning.ComputeThreads, что использует сам движок.
     /// </summary>
     public int DefaultThreads { get; set; }
 
@@ -49,16 +49,19 @@ public sealed class EngineInfo
             ModelExists = File.Exists(modelPath),
             Language = options.Language,
             ProcessorCount = Environment.ProcessorCount,
-            // C2/C1 (CP6): блок engine описывает КОНФИГУРАЦИЮ ПРОЦЕССА по умолчанию, а не плечо.
-            // Пер-прогонные значения лежат в runs[].ctxFloor / runs[].threads — дублировать их
-            // в шапке нельзя: у свипа плеч несколько, и «последнее выигравшее» вводило бы в
-            // заблуждение. Поэтому Collect вызывается ДО цикла по плечам (см. правку ниже),
-            // а ApplyTuningEnvironment восстанавливает окружение в finally.
+            // C2/C1 (CP6): блок engine описывает КОНФИГУРАЦИЮ ПРОЦЕССА, разрешённую из options —
+            // то есть ровно то, что запросили --ctx-floor/--thread-mode/--threads (или дефолты
+            // CliOptions, если флаги не переданы). НЕ читаем WhisperTuning.* (ambient-окружение):
+            // до первого ApplyTuningEnvironment оно пустое, а команда engine-info ApplyTuningEnvironment
+            // не зовёт вовсе — чтение окружения здесь всегда возвращало бы дефолты движка и молча
+            // игнорировало явные --ctx-floor/--thread-mode. Пер-прогонные значения лежат в
+            // runs[].ctxFloor / runs[].threads — дублировать их в шапке при свипе нельзя: плеч
+            // несколько, и «последнее выигравшее» вводило бы в заблуждение.
             DefaultThreads = WhisperTuning.ComputeThreads(
-                WhisperTuning.Mode, Environment.ProcessorCount, Math.Max(1, options.Parallel),
-                options.Threads ?? WhisperTuning.ThreadsOverride),
-            CtxFloorDefault = WhisperTuning.AudioContextFloor,
-            ThreadMode = WhisperTuning.Mode == ThreadBudgetMode.Divided ? "divided" : "legacy",
+                WhisperTuning.ParseMode(options.ThreadMode), Environment.ProcessorCount,
+                Math.Max(1, options.Parallel), options.Threads),
+            CtxFloorDefault = options.CtxFloor,
+            ThreadMode = options.ThreadMode,
             BeamDefault = options.Beam,
             WhisperNet = WhisperNetVersion(),
             RuntimeInfo = runtimeInfo ?? "",

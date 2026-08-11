@@ -119,17 +119,21 @@ public sealed class TranscribeRunner : IDisposable
     }
 
     /// <summary>
-    /// Зеркало формулы §5.2 скелета (WhisperTuning.ComputeAudioContextSize, появляется в CP5):
-    /// floor &lt;= 0 → 0 (kill-switch); иначе max(floor, align64(ceil(dur/30×1500))).
-    /// До CP5 движок применяет свой inline-вариант с полом 256, поэтому поле audioContextSize
-    /// в отчёте показывает ЗАПРОШЕННОЕ значение, а не фактическое.
+    /// Фактически применяемый движком AudioContextSize (CP5, WhisperSpeechRecognizer.cs:292-306):
+    /// вызывает ровно ту же чистую формулу (WhisperTuning.ComputeAudioContextSize) и повторяет
+    /// ОБА guard'а движка, а не только floor:
+    ///   1) language=auto → 0 (детект языка идёт на полном окне, спека §3.1);
+    ///   2) вычисленный размер ≥ FullWindowContext (1500) → 0 (предохранитель от whisper.cpp -5).
+    /// При совпадении входов (duration, floor, language) с тем, что ушло в движок на данном
+    /// плече, результат идентичен применённому — второго источника истины здесь нет, это то же
+    /// уравнение с теми же аргументами.
     /// </summary>
-    public static int ExpectedAudioContextSize(double durationSeconds, int floor)
+    public static int ExpectedAudioContextSize(double durationSeconds, int floor, string language = CliOptions.DefaultLanguage)
     {
-        if (floor <= 0) return 0;
-        var raw = (int)Math.Ceiling(durationSeconds / 30.0 * 1500);
-        var aligned = (raw + 63) / 64 * 64;
-        return Math.Max(floor, aligned);
+        if (string.Equals(language, "auto", StringComparison.OrdinalIgnoreCase)) return 0;
+
+        var size = WhisperTuning.ComputeAudioContextSize(durationSeconds, floor);
+        return size >= WhisperTuning.FullWindowContext ? 0 : size;
     }
 
     public async Task<RunReport> RunAsync(CliOptions options, CancellationToken ct = default)
@@ -161,10 +165,11 @@ public sealed class TranscribeRunner : IDisposable
 
         string? runtimeInfo = null;
 
-        // C2/C1 (CP6): ambient-конфигурация процесса снимается ДО первого ApplyTuningEnvironment —
-        // после него переменные окружения принадлежат плечу, а не процессу.
-        // Пер-прогонные значения и так лежат в runs[].ctxFloor / runs[].threads.
+        // C2/C1 (CP6): блок engine — чистая функция options (см. EngineInfo.Collect), поэтому его
+        // можно снять в любой момент; ДО цикла — чтобы не путать с пер-прогонными значениями
+        // (runs[].ctxFloor / runs[].threads / runs[].threadMode), которые у свипа разные на плечо.
         var engineInfo = EngineInfo.Collect(options, _modelPath, null);
+        var threadModeEnum = WhisperTuning.ParseMode(options.ThreadMode);
 
         try
         {
@@ -177,7 +182,12 @@ public sealed class TranscribeRunner : IDisposable
                         ct.ThrowIfCancellationRequested();
                         ApplyTuningEnvironment(ctx, threads, options.ThreadMode);
 
-                        var arm = BuildArmName(ctx, threads, beam);
+                        // C2 (CP6): та же формула и те же входы, что видит движок на этом плече
+                        // (ApplyTuningEnvironment только что выставила их в окружение) — arm и
+                        // RunRecord.Threads показывают РАЗРЕШЁННОЕ число потоков, а не запрос.
+                        var appliedThreads = WhisperTuning.ComputeThreads(
+                            threadModeEnum, Environment.ProcessorCount, Math.Max(1, options.Parallel), threads);
+                        var arm = BuildArmName(ctx, appliedThreads, options.ThreadMode, beam);
                         Log.Information("Плечо {Arm}", arm);
 
                         // Движок берётся из кэша: модель грузится один раз на (модель, язык, beam),
@@ -201,8 +211,8 @@ public sealed class TranscribeRunner : IDisposable
                                     await gate.WaitAsync(ct);
                                     try
                                     {
-                                        return await RunOneAsync(recognizer, captured, arm, ctx, threads, beam,
-                                            options.Parallel, repeatIndex, runId, ct);
+                                        return await RunOneAsync(recognizer, captured, arm, ctx, appliedThreads,
+                                            options.ThreadMode, beam, options.Parallel, repeatIndex, runId, ct);
                                     }
                                     finally
                                     {
@@ -249,7 +259,7 @@ public sealed class TranscribeRunner : IDisposable
     }
 
     private async Task<RunRecord> RunOneAsync(WhisperSpeechRecognizer recognizer, AudioSource source, string arm,
-        int ctxFloor, int? threads, bool beam, int parallel, int repeatIndex, int runId, CancellationToken ct)
+        int ctxFloor, int appliedThreads, string threadMode, bool beam, int parallel, int repeatIndex, int runId, CancellationToken ct)
     {
         var record = new RunRecord
         {
@@ -258,8 +268,9 @@ public sealed class TranscribeRunner : IDisposable
             DurationMs = source.Audio.Duration.TotalMilliseconds,
             Arm = arm,
             CtxFloor = ctxFloor,
-            AudioContextSize = ExpectedAudioContextSize(source.Audio.Duration.TotalSeconds, ctxFloor),
-            Threads = threads,
+            AudioContextSize = ExpectedAudioContextSize(source.Audio.Duration.TotalSeconds, ctxFloor, _language),
+            Threads = appliedThreads,
+            ThreadMode = threadMode,
             Beam = beam,
             Parallel = parallel,
             RepeatIndex = repeatIndex
@@ -315,11 +326,11 @@ public sealed class TranscribeRunner : IDisposable
         Environment.SetEnvironmentVariable("LWHISPER_WHISPER_THREADS", null);
     }
 
-    private static string BuildArmName(int ctxFloor, int? threads, bool beam)
-    {
-        var t = threads.HasValue ? threads.Value.ToString(CultureInfo.InvariantCulture) : "auto";
-        return $"ctx={ctxFloor.ToString(CultureInfo.InvariantCulture)},threads={t},beam={(beam ? "true" : "false")}";
-    }
+    private static string BuildArmName(int ctxFloor, int appliedThreads, string threadMode, bool beam)
+        => $"ctx={ctxFloor.ToString(CultureInfo.InvariantCulture)}," +
+           $"threads={appliedThreads.ToString(CultureInfo.InvariantCulture)}," +
+           $"mode={threadMode}," +
+           $"beam={(beam ? "true" : "false")}";
 
     /// <summary>
     /// Имя файла полной записи сессии, который CP1 кладёт рядом с сегментами. В корпус для свипа он
@@ -365,7 +376,19 @@ public sealed class TranscribeRunner : IDisposable
             }
 
             var bytes = File.ReadAllBytes(file);
-            var audio = WavFile.Parse(bytes, file);
+            AudioData audio;
+            try
+            {
+                audio = WavFile.Parse(bytes, file);
+            }
+            catch (Exception ex) when (ex is InvalidDataException or ArgumentException or IOException)
+            {
+                // Битый/неподдерживаемый WAV не должен ронять процесс необработанным исключением
+                // (README: код возврата 1 — ошибка входа) и не должен обезличиваться в MCP до
+                // "An error occurred invoking 'transcribe'." — CliParseException уже маппится
+                // в обоих местах (Program.cs, LWhisperMcpTools.cs).
+                throw new CliParseException($"Не удалось прочитать {file}: {ex.Message}");
+            }
 
             if (audio.Duration.TotalSeconds > maxDurationSeconds)
             {
