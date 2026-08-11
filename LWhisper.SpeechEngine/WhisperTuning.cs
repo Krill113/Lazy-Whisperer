@@ -3,6 +3,19 @@ using Serilog;
 namespace LWhisper.SpeechEngine
 {
     /// <summary>
+    /// Режим расчёта бюджета потоков Whisper.
+    /// Legacy — поведение прода (все логические ядра). Divided — деление бюджета на параллелизм.
+    /// </summary>
+    public enum ThreadBudgetMode
+    {
+        /// <summary>Все логические ядра — поведение до волны, дефолт.</summary>
+        Legacy = 0,
+
+        /// <summary>(P - ReservedCores) / effectiveParallelism, минимум 1.</summary>
+        Divided = 1
+    }
+
+    /// <summary>
     /// Тюнинговые константы и чистые формулы Whisper-движка.
     /// <para>
     /// D7: всё, что специфично для whisper.cpp, живёт здесь, а не в <c>LWhisper.Core</c> —
@@ -91,8 +104,108 @@ namespace LWhisper.SpeechEngine
         }
 
         // ==================== C2: бюджет потоков ====================
-        // ReservedCores, ThreadBudgetMode, Mode, ThreadsOverride и ComputeThreads
-        // добавляются сюда же в CP6. Раньше времени не заводить.
+
+        /// <summary>
+        /// Сколько логических ядер резервируется под ОС и аудио-поток.
+        /// Источник: whisper-type (MIT), github.com/kirillrub108/whisper-type,
+        /// файл whispertype/config.py, константа RESERVED_CPUS = 2,
+        /// коммит c1e58b903f577005a96f51350ac34a02e71702be:
+        ///     def resolve_cpu_threads(configured): return max(1, (os.cpu_count() or 4) - RESERVED_CPUS)
+        /// ВАЖНО: у источника деления на параллелизм НЕТ — их конвейер последовательный
+        /// (один инференс за раз). Деление на effectiveParallelism — наше решение (спека §3.2, плечо 2),
+        /// поэтому режим Divided по умолчанию выключен и включается только на время A/B.
+        /// </summary>
+        public const int ReservedCores = 2;
+
+        /// <summary>
+        /// Режим бюджета потоков из LWHISPER_THREAD_MODE (legacy|divided).
+        /// Переменная отсутствует или не распознана → Legacy = поведение прода.
+        /// <para>
+        /// ЧИТАЕТСЯ ПРИ КАЖДОМ ОБРАЩЕНИИ — как и <see cref="AudioContextFloor"/> (CP5) и по той же
+        /// причине: <c>LWhisper.DevTools</c> меняет переменные между плечами свипа внутри одного
+        /// процесса, и кэш на статическом инициализаторе убил бы <c>--grid-threads</c>/<c>--thread-mode</c>.
+        /// Строка <c>override</c> дедуплицирована по значению (<c>ShouldLogEnv</c>).
+        /// </para>
+        /// </summary>
+        public static ThreadBudgetMode Mode => ReadThreadMode();
+
+        /// <summary>
+        /// Жёсткое переопределение числа потоков из LWHISPER_WHISPER_THREADS (целое > 0).
+        /// null = переопределения нет. Значения ≤ 0 игнорируются с Warning.
+        /// Читается при каждом обращении — см. примечание к <see cref="Mode"/>.
+        /// </summary>
+        public static int? ThreadsOverride => ReadThreadsOverride();
+
+        /// <summary>
+        /// Чистая функция расчёта числа потоков — окружение здесь не читается, вся тестируемость тут.
+        /// Legacy → processorCount (дефолт волны, поведение прода не меняется).
+        /// Divided → clamp((P - ReservedCores) / max(1, parallelism), 1, P).
+        /// explicitOverride > 0 → clamp(override, 1, P) и режим игнорируется.
+        /// </summary>
+        public static int ComputeThreads(ThreadBudgetMode mode, int processorCount,
+                                         int effectiveParallelism, int? explicitOverride)
+        {
+            var cores = Math.Max(1, processorCount);
+
+            if (explicitOverride is int forced && forced > 0)
+                return Math.Min(forced, cores);
+
+            var parallelism = Math.Max(1, effectiveParallelism);
+
+            return mode switch
+            {
+                ThreadBudgetMode.Divided => Math.Clamp((cores - ReservedCores) / parallelism, 1, cores),
+                _ => cores
+            };
+        }
+
+        private const string ThreadModeEnv = "LWHISPER_THREAD_MODE";
+        private const string ThreadsOverrideEnv = "LWHISPER_WHISPER_THREADS";
+
+        private static ThreadBudgetMode ReadThreadMode()
+        {
+            var raw = Environment.GetEnvironmentVariable(ThreadModeEnv);
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                ShouldLogEnv(ThreadModeEnv, string.Empty);   // сброс дедупа (см. CP5)
+                return ThreadBudgetMode.Legacy;
+            }
+
+            var normalized = raw.Trim().ToLowerInvariant();
+            var shouldLog = ShouldLogEnv(ThreadModeEnv, normalized);
+
+            switch (normalized)
+            {
+                case "legacy":
+                    if (shouldLog) Log.Information("WhisperTuning: {Env} override = legacy", ThreadModeEnv);
+                    return ThreadBudgetMode.Legacy;
+                case "divided":
+                    if (shouldLog) Log.Information("WhisperTuning: {Env} override = divided", ThreadModeEnv);
+                    return ThreadBudgetMode.Divided;
+                default:
+                    if (shouldLog)
+                        Log.Warning("WhisperTuning: {Env}={Raw} не распознан — используется legacy", ThreadModeEnv, raw);
+                    return ThreadBudgetMode.Legacy;
+            }
+        }
+
+        private static int? ReadThreadsOverride()
+        {
+            if (!TryReadIntEnv(ThreadsOverrideEnv, out var value)) return null;
+
+            var shouldLog = ShouldLogEnv(ThreadsOverrideEnv,
+                value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+            if (value <= 0)
+            {
+                if (shouldLog)
+                    Log.Warning("WhisperTuning: {Env}={Value} игнорируется (требуется > 0)", ThreadsOverrideEnv, value);
+                return null;
+            }
+
+            if (shouldLog) Log.Information("WhisperTuning: {Env} override = {Value}", ThreadsOverrideEnv, value);
+            return value;
+        }
 
         /// <summary>
         /// Прочитать целочисленную переменную окружения.

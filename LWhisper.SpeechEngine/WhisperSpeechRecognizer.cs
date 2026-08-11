@@ -21,6 +21,8 @@ namespace LWhisper.SpeechEngine
         private bool _isUsingGpu;
         private readonly StreamingSettings? _settings;
         private readonly string? _initialPrompt;
+        // C2 (CP6): сколько распознаваний может идти одновременно — приходит из App.xaml.cs
+        private readonly int _effectiveParallelism;
 
         // P2: аварийный fallback RecognizeStreamingAsync → RecognizeAsync работает на ЕДИНСТВЕННОМ
         // общем _processor. При параллелизме > 1 два сегмента способны войти в него одновременно —
@@ -39,14 +41,28 @@ namespace LWhisper.SpeechEngine
         /// </summary>
         public bool GpuInitFailed { get; private set; }
 
-        public WhisperSpeechRecognizer(string modelPath, string language = "auto", bool gpuFailed = false, StreamingSettings? settings = null, string? initialPrompt = null)
+        /// <param name="effectiveParallelism">
+        /// C2 (CP6): сколько распознаваний реально может идти параллельно (streaming-бюджет).
+        /// 1 = один сегмент в полёте. Влияет только на режим ThreadBudgetMode.Divided.
+        /// </param>
+        public WhisperSpeechRecognizer(string modelPath, string language = "auto", bool gpuFailed = false, StreamingSettings? settings = null, string? initialPrompt = null, int effectiveParallelism = 1)
         {
             _modelPath = modelPath;
             _language = language;
             _gpuFailed = gpuFailed;
             _settings = settings;
             _initialPrompt = string.IsNullOrWhiteSpace(initialPrompt) ? null : initialPrompt;
+            _effectiveParallelism = effectiveParallelism;
         }
+
+        /// <summary>
+        /// C2 (CP6): единственная точка, откуда число потоков попадает в builder.
+        /// Дефолт волны — ThreadBudgetMode.Legacy, то есть Environment.ProcessorCount:
+        /// без переменных окружения поведение прода не меняется.
+        /// </summary>
+        private int ResolveThreads() =>
+            WhisperTuning.ComputeThreads(WhisperTuning.Mode, Environment.ProcessorCount,
+                                         _effectiveParallelism, WhisperTuning.ThreadsOverride);
 
         /// <summary>
         /// Инициализировать процессор Whisper с автоматическим выбором GPU/CPU
@@ -76,8 +92,8 @@ namespace LWhisper.SpeechEngine
 
                     // P3: число потоков вычисляется ОДИН раз и переиспользуется в строке лога ниже.
                     // "Whisper runtime: … Threads: N" обязана печатать то, что реально ушло в WithThreads,
-                    // иначе smoke CP6 (бюджет потоков) врёт. Значение здесь НЕ меняется — это CP6.
-                    var builderThreads = Environment.ProcessorCount;
+                    // иначе smoke CP6 (бюджет потоков) врёт. CP6: значение теперь считается по формуле бюджета.
+                    var builderThreads = ResolveThreads();
 
                     var builder = _factory.CreateBuilder()
                         .WithLanguage(_language)
@@ -295,8 +311,8 @@ namespace LWhisper.SpeechEngine
 
                 // P3: значения фиксируются ДО построения builder'а и печатаются в том виде,
                 // в каком уходят в native — иначе свипы CP2/CP3 нечем верифицировать.
-                // Сами значения здесь НЕ меняются: потоки — CP6, ctx — CP5.
-                var streamingThreads = Environment.ProcessorCount;
+                // CP6: потоки теперь считаются по формуле бюджета; ctx — формула CP5.
+                var streamingThreads = ResolveThreads();
                 var useBeamSearch = _settings?.UseBeamSearch == true;
 
                 Log.Debug("Streaming recognition: duration={Duration:F1}s, audioContextSize={ContextSize}, " +

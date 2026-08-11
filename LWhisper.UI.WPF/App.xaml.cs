@@ -209,6 +209,23 @@ namespace LWhisper.UI.WPF
         }
 
         /// <summary>
+        /// C2 (CP6): единственная точка расчёта эффективного параллелизма распознавания.
+        /// W1: adaptive parallelism — на CPU клиппим до 2, на GPU респектим юзерское значение.
+        /// При выключенном streaming в полёте всегда один сегмент → параллелизм 1.
+        /// Читает только настройки (не поле _useStreamingMode): вызывается в том числе из
+        /// InitializeSpeechRecognizer(), который отрабатывает РАНЬШЕ InitializeAudioRecorder().
+        /// </summary>
+        private static int ComputeEffectiveParallelism(AppSettings settings)
+        {
+            var streaming = settings.Streaming;
+            if (streaming == null || !streaming.Enabled) return 1;
+
+            return settings.GpuFailed
+                ? Math.Min(2, streaming.MaxParallelRecognitions)
+                : streaming.MaxParallelRecognitions;
+        }
+
+        /// <summary>
         /// Инициализировать речевой движок (Whisper или Mock)
         /// </summary>
         private void InitializeSpeechRecognizer()
@@ -248,7 +265,11 @@ namespace LWhisper.UI.WPF
                         Log.Warning(ex, "Не удалось прочитать vocabulary.txt — продолжаем без prompt");
                     }
 
-                    var whisperRecognizer = new LWhisper.SpeechEngine.WhisperSpeechRecognizer(modelPath, _settings.RecognitionLanguage, _settings.GpuFailed, _settings.Streaming, vocabularyPrompt);
+                    // C2 (CP6): распознаватель получает тот же бюджет параллелизма, что и streaming-путь.
+                    // Дыра закрыта явно: общий _processor (цель fallback) при включённом streaming
+                    // считает потоки по streaming-бюджету, а не по traditional.
+                    var effectiveParallelism = ComputeEffectiveParallelism(_settings);
+                    var whisperRecognizer = new LWhisper.SpeechEngine.WhisperSpeechRecognizer(modelPath, _settings.RecognitionLanguage, _settings.GpuFailed, _settings.Streaming, vocabularyPrompt, effectiveParallelism);
 
                     // ВАЖНО: Инициализировать асинхронно
                     Task.Run(async () =>
@@ -332,10 +353,9 @@ namespace LWhisper.UI.WPF
                     var streamingRecorder = new StreamingAudioRecorder(_vad, _settings.Streaming);
                     
                     // Создать менеджер распознавания сегментов
-                    // W1: adaptive parallelism — на CPU клиппим до 2, на GPU респектим юзерское значение
-                    int parallelism = _settings.GpuFailed
-                        ? Math.Min(2, _settings.Streaming.MaxParallelRecognitions)
-                        : _settings.Streaming.MaxParallelRecognitions;
+                    // C2 (CP6): формула живёт в ComputeEffectiveParallelism — тот же бюджет уже
+                    // получил распознаватель в InitializeSpeechRecognizer(). Дублировать запрещено.
+                    int parallelism = ComputeEffectiveParallelism(_settings);
                     _recognitionManager = new SegmentRecognitionManager(
                         _speechRecognizer,
                         parallelism

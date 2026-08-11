@@ -1,4 +1,5 @@
 using System.Reflection;
+using LWhisper.SpeechEngine;
 using LWhisper.SpeechEngine.Diagnostics;
 using Whisper.net;
 
@@ -48,9 +49,16 @@ public sealed class EngineInfo
             ModelExists = File.Exists(modelPath),
             Language = options.Language,
             ProcessorCount = Environment.ProcessorCount,
-            DefaultThreads = options.Threads ?? Environment.ProcessorCount,
-            CtxFloorDefault = options.CtxFloor,
-            ThreadMode = options.ThreadMode,
+            // C2/C1 (CP6): блок engine описывает КОНФИГУРАЦИЮ ПРОЦЕССА по умолчанию, а не плечо.
+            // Пер-прогонные значения лежат в runs[].ctxFloor / runs[].threads — дублировать их
+            // в шапке нельзя: у свипа плеч несколько, и «последнее выигравшее» вводило бы в
+            // заблуждение. Поэтому Collect вызывается ДО цикла по плечам (см. правку ниже),
+            // а ApplyTuningEnvironment восстанавливает окружение в finally.
+            DefaultThreads = WhisperTuning.ComputeThreads(
+                WhisperTuning.Mode, Environment.ProcessorCount, Math.Max(1, options.Parallel),
+                options.Threads ?? WhisperTuning.ThreadsOverride),
+            CtxFloorDefault = WhisperTuning.AudioContextFloor,
+            ThreadMode = WhisperTuning.Mode == ThreadBudgetMode.Divided ? "divided" : "legacy",
             BeamDefault = options.Beam,
             WhisperNet = WhisperNetVersion(),
             RuntimeInfo = runtimeInfo ?? "",

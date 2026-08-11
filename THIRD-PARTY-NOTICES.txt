@@ -58,3 +58,5 @@ License: MIT — https://github.com/kirillrub108/whisper-type/blob/main/LICENSE
 (файл whispertype/config.py, коммит c1e58b903f577005a96f51350ac34a02e71702be, 2026-08-06).
 Используются в LWhisper.UI.WPF/Services/SegmentRecognitionManager.cs как фразы-маркеры
 фильтра галлюцинаций. Код, алгоритм фильтрации и разбиение по тирам — собственные.
+Также заимствована константа RESERVED_CPUS = 2 (тот же файл и коммит) — используется как
+LWhisper.SpeechEngine/WhisperTuning.cs: WhisperTuning.ReservedCores.

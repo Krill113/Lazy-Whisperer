@@ -59,7 +59,9 @@ public sealed class TranscribeRunner : IDisposable
     /// builder заново на каждый вызов (WhisperSpeechRecognizer.cs:202-228), поэтому смена
     /// env-переменных между плечами действует и на прогретом движке.
     /// </summary>
-    private readonly Dictionary<(string Model, string Language, bool Beam), WhisperSpeechRecognizer> _engines = new();
+    // C2 (CP6): параллелизм задаётся конструктором распознавателя и влияет на ResolveThreads(),
+    // поэтому он часть ключа — иначе прогон с --parallel 3 получил бы движок, прогретый под 1.
+    private readonly Dictionary<(string Model, string Language, bool Beam, int Parallelism), WhisperSpeechRecognizer> _engines = new();
     private bool _disposed;
 
     public TranscribeRunner(string modelPath, string language, bool gpu = false)
@@ -79,13 +81,17 @@ public sealed class TranscribeRunner : IDisposable
     /// Возвращает прогретый распознаватель для плеча. Вызовы RunAsync сериализованы снаружи
     /// (CLI — один прогон за раз, MCP — SemaphoreSlim(1,1) в McpEngine), поэтому словарь без блокировки.
     /// </summary>
-    private async Task<WhisperSpeechRecognizer> GetOrCreateRecognizerAsync(bool beam)
+    private async Task<WhisperSpeechRecognizer> GetOrCreateRecognizerAsync(bool beam, int effectiveParallelism)
     {
-        var key = (_modelPath, _language, beam);
+        var key = (_modelPath, _language, beam, effectiveParallelism);
         if (_engines.TryGetValue(key, out var cached)) return cached;
 
         var settings = new StreamingSettings { UseBeamSearch = beam };
-        var recognizer = new WhisperSpeechRecognizer(_modelPath, _language, gpuFailed: !_gpu, settings: settings);
+        // C2 (CP6): стенд отдаёт движку тот же параллелизм, с каким сам гоняет прогоны —
+        // иначе режим divided на стенде и в приложении считал бы разный бюджет.
+        var recognizer = new WhisperSpeechRecognizer(
+            _modelPath, _language, gpuFailed: !_gpu, settings: settings,
+            initialPrompt: null, effectiveParallelism: effectiveParallelism);
         try
         {
             await recognizer.InitializeAsync();
@@ -155,60 +161,80 @@ public sealed class TranscribeRunner : IDisposable
 
         string? runtimeInfo = null;
 
-        foreach (var beam in beamArms)
+        // C2/C1 (CP6): ambient-конфигурация процесса снимается ДО первого ApplyTuningEnvironment —
+        // после него переменные окружения принадлежат плечу, а не процессу.
+        // Пер-прогонные значения и так лежат в runs[].ctxFloor / runs[].threads.
+        var engineInfo = EngineInfo.Collect(options, _modelPath, null);
+
+        try
         {
-            foreach (var ctx in ctxArms)
+            foreach (var beam in beamArms)
             {
-                foreach (var threads in threadArms)
+                foreach (var ctx in ctxArms)
                 {
-                    ct.ThrowIfCancellationRequested();
-                    ApplyTuningEnvironment(ctx, threads, options.ThreadMode);
-
-                    var arm = BuildArmName(ctx, threads, beam);
-                    Log.Information("Плечо {Arm}", arm);
-
-                    // Движок берётся из кэша: модель грузится один раз на (модель, язык, beam),
-                    // а не на каждое плечо сетки. Диспозится в TranscribeRunner.Dispose().
-                    var recognizer = await GetOrCreateRecognizerAsync(beam);
-
-                    runtimeInfo ??= EngineInfo.SafeRuntimeInfo();
-
-                    using var gate = new SemaphoreSlim(Math.Max(1, options.Parallel));
-                    var tasks = new List<Task<RunRecord>>();
-
-                    for (var repeat = 0; repeat < options.Repeat; repeat++)
+                    foreach (var threads in threadArms)
                     {
-                        var repeatIndex = repeat;
-                        foreach (var source in sources)
-                        {
-                            var runId = Interlocked.Increment(ref _nextRunId);
-                            var captured = source;
-                            tasks.Add(Task.Run(async () =>
-                            {
-                                await gate.WaitAsync(ct);
-                                try
-                                {
-                                    return await RunOneAsync(recognizer, captured, arm, ctx, threads, beam,
-                                        options.Parallel, repeatIndex, runId, ct);
-                                }
-                                finally
-                                {
-                                    gate.Release();
-                                }
-                            }, ct));
-                        }
-                    }
+                        ct.ThrowIfCancellationRequested();
+                        ApplyTuningEnvironment(ctx, threads, options.ThreadMode);
 
-                    var records = await Task.WhenAll(tasks);
-                    report.Runs.AddRange(records
-                        .OrderBy(r => r.RepeatIndex)
-                        .ThenBy(r => r.File, StringComparer.OrdinalIgnoreCase));
+                        var arm = BuildArmName(ctx, threads, beam);
+                        Log.Information("Плечо {Arm}", arm);
+
+                        // Движок берётся из кэша: модель грузится один раз на (модель, язык, beam),
+                        // а не на каждое плечо сетки. Диспозится в TranscribeRunner.Dispose().
+                        var recognizer = await GetOrCreateRecognizerAsync(beam, Math.Max(1, options.Parallel));
+
+                        runtimeInfo ??= EngineInfo.SafeRuntimeInfo();
+
+                        using var gate = new SemaphoreSlim(Math.Max(1, options.Parallel));
+                        var tasks = new List<Task<RunRecord>>();
+
+                        for (var repeat = 0; repeat < options.Repeat; repeat++)
+                        {
+                            var repeatIndex = repeat;
+                            foreach (var source in sources)
+                            {
+                                var runId = Interlocked.Increment(ref _nextRunId);
+                                var captured = source;
+                                tasks.Add(Task.Run(async () =>
+                                {
+                                    await gate.WaitAsync(ct);
+                                    try
+                                    {
+                                        return await RunOneAsync(recognizer, captured, arm, ctx, threads, beam,
+                                            options.Parallel, repeatIndex, runId, ct);
+                                    }
+                                    finally
+                                    {
+                                        gate.Release();
+                                    }
+                                }, ct));
+                            }
+                        }
+
+                        var records = await Task.WhenAll(tasks);
+                        report.Runs.AddRange(records
+                            .OrderBy(r => r.RepeatIndex)
+                            .ThenBy(r => r.File, StringComparer.OrdinalIgnoreCase));
+                    }
                 }
             }
         }
+        finally
+        {
+            // C2 (CP6): рычаги плеча не должны переживать прогон. Переменные СНИМАЮТСЯ, а не
+            // «восстанавливаются в исходное»: ApplyTuningEnvironment и так затирает унаследованное
+            // значение на первом же плече (оно задаётся опциями --ctx-floor/--threads/--thread-mode),
+            // поэтому снятие возвращает ровно дефолты кода — то, что и обязан показывать engine_info
+            // между вызовами. Читать окружение здесь нельзя: закон §4 скелета — GetEnvironmentVariable
+            // живёт только в LWhisper.SpeechEngine.
+            ClearTuningEnvironment();
+        }
 
-        report.Engine = EngineInfo.Collect(options, _modelPath, runtimeInfo);
-        report.Engine.Gpu = _gpu;
+        // Строка рантайма доступна только после загрузки нативной библиотеки — дописываем в снимок.
+        engineInfo.RuntimeInfo = runtimeInfo ?? "";
+        engineInfo.Gpu = _gpu;
+        report.Engine = engineInfo;
         report.FinishedUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
         report.Summary = Statistics.Summarize(report.Runs);
 
@@ -280,6 +306,13 @@ public sealed class TranscribeRunner : IDisposable
         Environment.SetEnvironmentVariable("LWHISPER_THREAD_MODE", threadMode);
         Environment.SetEnvironmentVariable("LWHISPER_WHISPER_THREADS",
             threads.HasValue ? threads.Value.ToString(CultureInfo.InvariantCulture) : null);
+    }
+
+    private static void ClearTuningEnvironment()
+    {
+        Environment.SetEnvironmentVariable("LWHISPER_AUDIO_CTX_FLOOR", null);
+        Environment.SetEnvironmentVariable("LWHISPER_THREAD_MODE", null);
+        Environment.SetEnvironmentVariable("LWHISPER_WHISPER_THREADS", null);
     }
 
     private static string BuildArmName(int ctxFloor, int? threads, bool beam)

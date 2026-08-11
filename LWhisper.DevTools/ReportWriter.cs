@@ -44,7 +44,7 @@ public static class ReportWriter
         sb.AppendLine($"- **Язык:** {Md(e.Language)}");
         sb.AppendLine($"- **GPU:** {(e.Gpu ? "да" : "нет (стенд CPU-only)")}");
         sb.AppendLine($"- **Ядер:** {e.ProcessorCount.ToString(c)}; потоки по умолчанию: {e.DefaultThreads.ToString(c)}; режим: {Md(e.ThreadMode)}");
-        sb.AppendLine($"- **Floor окна энкодера (дефолт прогона):** {e.CtxFloorDefault.ToString(c)}");
+        sb.AppendLine($"- **Floor окна энкодера (дефолт процесса, не плеча):** {e.CtxFloorDefault.ToString(c)}");
         sb.AppendLine($"- **Whisper.net:** {Md(e.WhisperNet)}");
         sb.AppendLine($"- **Runtime:** {Md(string.IsNullOrWhiteSpace(e.RuntimeInfo) ? "—" : e.RuntimeInfo)}");
         sb.AppendLine($"- **Дамп аудио (LWHISPER_DEBUG_AUDIO):** {(e.DumpEnabled ? "включён → " + Md(e.DumpDirectory ?? "") : "выключен")}");
