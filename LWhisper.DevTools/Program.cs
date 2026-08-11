@@ -22,6 +22,13 @@ public static class Program
     {
         DisableInheritedAudioDump();
 
+        // CP3: MCP-режим поднимается ДО любой настройки логирования CLI —
+        // console-sink Serilog в этом режиме подключать нельзя (stdout занят JSON-RPC).
+        if (LWhisper.DevTools.Mcp.McpMode.IsRequested(args))
+        {
+            return await LWhisper.DevTools.Mcp.McpMode.RunAsync(args);
+        }
+
         try { Console.OutputEncoding = Encoding.UTF8; } catch { /* перенаправленный stdout */ }
 
         if (args.Length == 0)
@@ -44,13 +51,6 @@ public static class Program
         catch (CliParseException ex)
         {
             Console.Error.WriteLine(ex.Message);
-            return ExitBadArguments;
-        }
-
-        if (options.Command == "mcp")
-        {
-            // CP3 заменяет эту ветку запуском stdio-сервера ModelContextProtocol.
-            Console.Error.WriteLine("MCP-режим появится в CP3 (план 04-cp3-mcp.md).");
             return ExitBadArguments;
         }
 

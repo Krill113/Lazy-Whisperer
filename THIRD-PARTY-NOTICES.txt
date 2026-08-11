@@ -39,6 +39,14 @@ License: MIT — https://github.com/hardcodet/wpf-notifyicon/blob/master/LICENSE
 Copyright (c) Serilog Contributors
 License: Apache License 2.0 — https://www.apache.org/licenses/LICENSE-2.0
 
+## ModelContextProtocol, ModelContextProtocol.Core (MCP C# SDK, только в LWhisper.DevTools)
+Copyright (c) Model Context Protocol a Series of LF Projects, LLC.
+License: Apache License 2.0 — https://github.com/modelcontextprotocol/csharp-sdk/blob/main/LICENSE
+
+## Microsoft.Extensions.Hosting и транзитивные Microsoft.Extensions.* (только в LWhisper.DevTools)
+Copyright (c) .NET Foundation and Contributors
+License: MIT — https://github.com/dotnet/runtime/blob/main/LICENSE.TXT
+
 ## System.Drawing.Common, System.Text.Json
 Copyright (c) .NET Foundation and Contributors
 License: MIT — https://github.com/dotnet/runtime/blob/main/LICENSE.TXT
