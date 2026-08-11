@@ -21,6 +21,15 @@ namespace LWhisper.SpeechEngine
         private readonly StreamingSettings? _settings;
         private readonly string? _initialPrompt;
 
+        // P2: аварийный fallback RecognizeStreamingAsync → RecognizeAsync работает на ЕДИНСТВЕННОМ
+        // общем _processor. При параллелизме > 1 два сегмента способны войти в него одновременно —
+        // это зона SEHException, и за 8 дней боевых логов путь не сработал ни разу (не оттестирован).
+        // Поэтому вход в fallback сериализуется.
+        // Dispose у гейта намеренно не вызывается: SemaphoreSlim без AvailableWaitHandle не держит
+        // неуправляемых ресурсов, а Dispose на лету уронил бы ожидающий fallback в
+        // ObjectDisposedException при переинициализации движка (App.ApplySettings).
+        private readonly SemaphoreSlim _fallbackGate = new SemaphoreSlim(1, 1);
+
         public bool IsReady => _isInitialized;
 
         /// <summary>
@@ -64,13 +73,18 @@ namespace LWhisper.SpeechEngine
                         UseFlashAttention = false
                     });
 
+                    // P3: число потоков вычисляется ОДИН раз и переиспользуется в строке лога ниже.
+                    // "Whisper runtime: … Threads: N" обязана печатать то, что реально ушло в WithThreads,
+                    // иначе smoke CP6 (бюджет потоков) врёт. Значение здесь НЕ меняется — это CP6.
+                    var builderThreads = Environment.ProcessorCount;
+
                     var builder = _factory.CreateBuilder()
                         .WithLanguage(_language)
                         // PERF-02: WithPrompt("") убран — пустая строка это не "нет промпта", а промпт с пустой строкой
                         .WithNoContext()
                         .WithSingleSegment()
                         // PERF-01: использовать все логические ядра CPU вместо дефолтных 4
-                        .WithThreads(Environment.ProcessorCount)
+                        .WithThreads(builderThreads)
                         // W1: antigallucination-параметры
                         .WithTemperature(0.0f)
                         .WithEntropyThreshold(2.4f)
@@ -113,7 +127,7 @@ namespace LWhisper.SpeechEngine
                     }
 
                     Log.Information("Whisper runtime: {RuntimeInfo}, GPU: {IsGpu}, Threads: {Threads}",
-                        runtimeInfo ?? "unknown", _isUsingGpu, Environment.ProcessorCount);
+                        runtimeInfo ?? "unknown", _isUsingGpu, builderThreads);
 
                     _isInitialized = true;
                     Log.Information("Whisper язык распознавания: {Language}", _language);
@@ -157,6 +171,16 @@ namespace LWhisper.SpeechEngine
                     Confidence = 1.0f
                 };
             }
+            catch (OperationCanceledException)
+            {
+                // P2: отмена (остановка записи, Dispose менеджера сегментов) — не отказ распознавания.
+                // Пробрасываем наверх: SegmentRecognitionManager.cs:185 ловит OCE и пишет Debug
+                // «Распознавание отменено». Без этой ветки отмена возвращала бы Success=false
+                // и порождала бы Warning «Распознавание не дало результата», засоряя базлайн.
+                // Traditional-путь безопасен: App.xaml.cs:753 зовёт RecognizeAsync без токена,
+                // а вызов обёрнут общим catch (App.xaml.cs:783).
+                throw;
+            }
             catch (Exception ex)
             {
                 return new RecognitionResult
@@ -194,8 +218,14 @@ namespace LWhisper.SpeechEngine
                 var alignedContextSize = ((rawContextSize + 63) / 64) * 64; // округление вверх до кратного 64
                 var audioContextSize = Math.Max(256, alignedContextSize);
 
-                Log.Debug("Streaming recognition: duration={Duration:F1}s, audioContextSize={ContextSize} (raw={RawSize})",
-                    durationSec, audioContextSize, rawContextSize);
+                // P3: значения фиксируются ДО построения builder'а и печатаются в том виде,
+                // в каком уходят в native — иначе свипы CP2/CP3 нечем верифицировать.
+                // Сами значения здесь НЕ меняются: потоки — CP6, ctx — CP5.
+                var streamingThreads = Environment.ProcessorCount;
+                var useBeamSearch = _settings?.UseBeamSearch == true;
+
+                Log.Debug("Streaming recognition: duration={Duration:F1}s, audioContextSize={ContextSize} (raw={RawSize}), threads={Threads}, beam={Beam}",
+                    durationSec, audioContextSize, rawContextSize, streamingThreads, useBeamSearch);
 
                 var floatData = ConvertBytesToFloat(audioData.RawData);
 
@@ -204,7 +234,7 @@ namespace LWhisper.SpeechEngine
                     .WithLanguage(_language)
                     .WithNoContext()
                     .WithSingleSegment()
-                    .WithThreads(Environment.ProcessorCount)
+                    .WithThreads(streamingThreads)
                     // PERF-04 EXPERIMENTAL: уменьшенное контекстное окно для коротких сегментов
                     .WithAudioContextSize(audioContextSize);
 
@@ -214,7 +244,7 @@ namespace LWhisper.SpeechEngine
                     streamingBuilder = streamingBuilder.WithPrompt(_initialPrompt);
                 }
 
-                if (_settings?.UseBeamSearch == true)
+                if (useBeamSearch)
                 {
                     if (streamingBuilder.WithBeamSearchSamplingStrategy() is BeamSearchSamplingStrategyBuilder beamBuilder)
                         beamBuilder.WithBeamSize(5);
@@ -244,11 +274,27 @@ namespace LWhisper.SpeechEngine
                     Confidence = 1.0f
                 };
             }
+            catch (OperationCanceledException)
+            {
+                // P2: отмена — не отказ streaming-пути. Без этой ветки отмена печатала бы ложный
+                // варнинг «Streaming recognition … failed» и уводила бы выполнение в fallback,
+                // а по правилу спеки §5 (п.4) любой замер со строкой fallback выбрасывается целиком.
+                throw;
+            }
             catch (Exception ex)
             {
                 Log.Warning(ex, "Streaming recognition с AudioContextSize failed — fallback на стандартный RecognizeAsync");
-                // Fallback: если экспериментальный метод сломался, использовать обычный
-                return await RecognizeAsync(audioData, cancellationToken);
+                // P2: fallback идёт на общий _processor, который один на весь распознаватель.
+                // Вход сериализуем — иначе при параллелизме > 1 два сегмента войдут в native одновременно.
+                await _fallbackGate.WaitAsync(cancellationToken);
+                try
+                {
+                    return await RecognizeAsync(audioData, cancellationToken);
+                }
+                finally
+                {
+                    _fallbackGate.Release();
+                }
             }
         }
 

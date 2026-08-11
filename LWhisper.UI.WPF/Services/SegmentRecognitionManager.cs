@@ -68,11 +68,16 @@ namespace LWhisper.UI.WPF.Services
             // Запустить распознавание в фоне с ограничением параллелизма
             var task = Task.Run(async () =>
             {
+                // P3: startTime берётся ПОСЛЕ семафора, поэтому {Elapsed} в строке
+                // «Распознано за …мс» не включает ожидание в очереди (в боевых логах сегмент
+                // ждал здесь до 6 с, и в цифрах это нигде не было видно). Замеряем отдельно.
+                var queuedAt = DateTime.Now;
                 await _parallelismLimit.WaitAsync(_cancellationTokenSource.Token);
-                
+                var waitMs = (int)(DateTime.Now - queuedAt).TotalMilliseconds;
+
                 var startTime = DateTime.Now;
-                Log.Debug("[Segment #{Id}] Начало распознавания (длительность аудио={Duration}мс)",
-                    segmentId, audioData.Duration.TotalMilliseconds);
+                Log.Debug("[Segment #{Id}] Начало распознавания (длительность аудио={Duration}мс, wait={Wait}мс)",
+                    segmentId, audioData.Duration.TotalMilliseconds, waitMs);
 
                 try
                 {
