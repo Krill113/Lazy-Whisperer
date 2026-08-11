@@ -128,6 +128,7 @@ namespace LWhisper.UI.WPF.Services
                             {
                                 Log.Information("[Segment #{Id}] Известная галлюцинация Whisper отфильтрована: \"{Text}\"",
                                     segmentId, cleanedText);
+                                AudioDumpSink.RecordPostFilterText(segmentId, string.Empty);
                                 return new RecognitionResult { Success = true, Text = string.Empty };
                             }
 
@@ -140,6 +141,7 @@ namespace LWhisper.UI.WPF.Services
                             {
                                 Log.Information("[Segment #{Id}] Высокий compression-ratio {Ratio:F2} ≥ {Threshold:F1} после dedup'ов, дроп сегмента: \"{Text}\"",
                                     segmentId, compressionRatio, CompressionThreshold, cleanedText.Length > 100 ? cleanedText.Substring(0, 100) + "..." : cleanedText);
+                                AudioDumpSink.RecordPostFilterText(segmentId, string.Empty);
                                 return new RecognitionResult { Success = true, Text = string.Empty };
                             }
 
@@ -148,7 +150,13 @@ namespace LWhisper.UI.WPF.Services
                             var uniqueText = RemoveDuplicatePrefix(cleanedText, previousText);
 
                             // CP1: текст после всей цепочки L0-L6 — для сверки с rawText из meta.jsonl.
-                            // Пустая строка здесь тоже информативна: значит фильтры съели сегмент целиком.
+                            // Пустая строка здесь тоже информативна: значит RemoveDuplicatePrefix съел
+                            // сегмент целиком (полный повтор предыдущего). Более ранние дропы
+                            // (известная галлюцинация, высокий compression-ratio, только аннотации,
+                            // неуспешное распознавание) пишут свою постфильтр-строку сами, каждый
+                            // на своей ветке return — иначе на такой сегмент есть type="segment" line
+                            // с rawText, но нет ни одной type="postfilter", и он неотличим в дампе
+                            // от "задача ещё не завершилась".
                             AudioDumpSink.RecordPostFilterText(segmentId, uniqueText);
                             
                             if (!string.IsNullOrWhiteSpace(uniqueText))
@@ -181,6 +189,7 @@ namespace LWhisper.UI.WPF.Services
                         else
                         {
                             Log.Debug("[Segment #{Id}] Сегмент содержит только аннотации, игнорируется", segmentId);
+                            AudioDumpSink.RecordPostFilterText(segmentId, string.Empty);
                         }
                     }
                     else
@@ -188,6 +197,7 @@ namespace LWhisper.UI.WPF.Services
                         Log.Warning("[Segment #{Id}] Распознавание не дало результата за {Elapsed}мс. " +
                             "Success={Success}, ErrorMessage={Error}",
                             segmentId, (int)elapsed, result.Success, result.ErrorMessage);
+                        AudioDumpSink.RecordPostFilterText(segmentId, string.Empty);
                     }
 
                     return result;
