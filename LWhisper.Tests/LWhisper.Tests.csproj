@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\LWhisper.UI.WPF\LWhisper.UI.WPF.csproj" />
+    <ProjectReference Include="..\LWhisper.DevTools\LWhisper.DevTools.csproj" />
   </ItemGroup>
 
 </Project>

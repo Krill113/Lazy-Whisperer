@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>LWhisper.DevTools</RootNamespace>
+    <AssemblyName>LWhisper.DevTools</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LWhisper.Core\LWhisper.Core.csproj" />
+    <ProjectReference Include="..\LWhisper.SpeechEngine\LWhisper.SpeechEngine.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Стенд CPU-only, как прод у владельца: Whisper.net.Runtime.Vulkan НЕ подключается,
+         распознаватель создаётся с gpuFailed:true. System.Text.Json не нужен — shared framework net8.0.
+         Версии совпадают с LWhisper.UI.WPF, чтобы не плодить вторую ветку NuGet-кэша в CI. -->
+    <PackageReference Include="Whisper.net.Runtime" Version="1.9.0" />
+    <PackageReference Include="Serilog" Version="4.3.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+  </ItemGroup>
+
+</Project>
