@@ -21,6 +21,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Пост-фильтры SegmentRecognitionManager (IsKnownHallucination) покрыты прямыми тестами -->
+    <InternalsVisibleTo Include="LWhisper.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\LWhisper.Core\LWhisper.Core.csproj" />
     <ProjectReference Include="..\LWhisper.SpeechEngine\LWhisper.SpeechEngine.csproj" />
   </ItemGroup>

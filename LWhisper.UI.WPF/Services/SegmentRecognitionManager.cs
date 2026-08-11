@@ -315,6 +315,15 @@ namespace LWhisper.UI.WPF.Services
 
         // Известные галлюцинации Whisper из YouTube-corpus.
         // Substrings — уверенные бренд-маркеры, ловятся в любом месте сегмента.
+        //
+        // Часть фраз заимствована из проекта whisper-type (MIT, Copyright (c) 2026 kirillrub108):
+        //   репозиторий github.com/kirillrub108/whisper-type
+        //   файл whispertype/config.py, константа DEFAULT_HALLUCINATION_PATTERNS
+        //   коммит c1e58b903f577005a96f51350ac34a02e71702be (2026-08-06)
+        // Лицензия — THIRD-PARTY-NOTICES.txt.
+        // Разбиение по тирам (substring / full-match) — НАШЕ: у источника все паттерны вырезаются
+        // как подстроки, у нас общие фразы фильтруются только целым сегментом (спека §3.6).
+        // Семантика тоже наша: источник вырезает подстроку, мы дропаем сегмент целиком.
         private static readonly string[] HallucinationSubstrings = new[]
         {
             "DimaTorzok",
@@ -325,6 +334,13 @@ namespace LWhisper.UI.WPF.Services
             "Корректор субтитров",
             "Подписывайтесь на канал",
             "Like and subscribe",
+            // C6, whisper-type DEFAULT_HALLUCINATION_PATTERNS @ c1e58b90 (в скобках — дословный паттерн источника)
+            "Субтитры делал",          // "субтитры делал"
+            "Редактор субтитров",      // "редактор субтитров"
+            "Amara.org",               // "amara.org"
+            "Subtitles by",            // "subtitles by"
+            "Переведено сообществом",  // "переведено сообществом"
+            "Thank you for watching",  // "thank you for watching"
         };
 
         // Full-match — общие фразы, фильтруются только если сегмент состоит ровно из них.
@@ -335,6 +351,11 @@ namespace LWhisper.UI.WPF.Services
             "Продолжение следует",
             "Спасибо за внимание",
             "Thanks for watching",
+            // C6, whisper-type DEFAULT_HALLUCINATION_PATTERNS @ c1e58b90.
+            // У источника это подстроки; у нас понижены в full-match — обе фразы могут быть
+            // настоящей речью («до новых встреч на объекте», «ставьте лайк на чертеже»).
+            "До новых встреч",         // "до новых встреч"
+            "Ставьте лайк",            // "ставьте лайк"
         };
 
         /// <summary>
@@ -362,7 +383,11 @@ namespace LWhisper.UI.WPF.Services
         /// Проверка текста на известные галлюцинации Whisper (YouTube-боилерплейт из training corpus).
         /// Срабатывает на коротких/тихих сегментах, где модель додумывает текст из памяти.
         /// </summary>
-        private static bool IsKnownHallucination(string text)
+        /// <remarks>
+        /// internal, а не private: фильтр покрыт прямыми тестами в LWhisper.Tests
+        /// (InternalsVisibleTo в LWhisper.UI.WPF.csproj). Вызывающий код не меняется.
+        /// </remarks>
+        internal static bool IsKnownHallucination(string text)
         {
             if (string.IsNullOrWhiteSpace(text)) return false;
 

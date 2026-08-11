@@ -50,3 +50,11 @@ License: MIT — https://github.com/dotnet/runtime/blob/main/LICENSE.TXT
 ## System.Drawing.Common, System.Text.Json
 Copyright (c) .NET Foundation and Contributors
 License: MIT — https://github.com/dotnet/runtime/blob/main/LICENSE.TXT
+
+## whisper-type (заимствован список фраз, исходный код не используется)
+Copyright (c) 2026 kirillrub108
+License: MIT — https://github.com/kirillrub108/whisper-type/blob/main/LICENSE
+Заимствовано: строковые маркеры из DEFAULT_HALLUCINATION_PATTERNS
+(файл whispertype/config.py, коммит c1e58b903f577005a96f51350ac34a02e71702be, 2026-08-06).
+Используются в LWhisper.UI.WPF/Services/SegmentRecognitionManager.cs как фразы-маркеры
+фильтра галлюцинаций. Код, алгоритм фильтрации и разбиение по тирам — собственные.
