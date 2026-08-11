@@ -1,5 +1,6 @@
 using LWhisper.Core.Interfaces;
 using LWhisper.Core.Models;
+using LWhisper.SpeechEngine.Diagnostics;
 using Whisper.net;
 using Whisper.net.Ggml;
 using Serilog;
@@ -197,7 +198,65 @@ namespace LWhisper.SpeechEngine
         /// Вычисляет оптимальный размер контекстного окна по длине аудио сегмента.
         /// В случае ошибки fallback на обычный RecognizeAsync.
         /// </summary>
-        public async Task<RecognitionResult> RecognizeStreamingAsync(AudioData audioData, CancellationToken cancellationToken = default)
+        public Task<RecognitionResult> RecognizeStreamingAsync(AudioData audioData, CancellationToken cancellationToken = default)
+            => RecognizeStreamingAsync(audioData, 0, cancellationToken);
+
+        /// <summary>
+        /// То же самое, но с id сегмента для дампа отладки (CP1).
+        /// debugSegmentId = 0 — id неизвестен, AudioDumpSink подставит собственный счётчик.
+        /// Пока переменная окружения LWHISPER_DEBUG_AUDIO не выставлена, метод сводится
+        /// к прямому вызову ядра: ни одного объекта меты не создаётся.
+        /// </summary>
+        public async Task<RecognitionResult> RecognizeStreamingAsync(AudioData audioData, int debugSegmentId, CancellationToken cancellationToken = default)
+        {
+            if (!AudioDumpSink.Enabled)
+            {
+                return await RecognizeStreamingCoreAsync(audioData, null, cancellationToken);
+            }
+
+            var meta = new SegmentDumpMeta
+            {
+                Type = "segment",
+                SegmentId = debugSegmentId,
+                Kind = "streaming",
+                TimestampUtc = DateTime.UtcNow.ToString("o"),
+                DurationMs = audioData.Duration.TotalMilliseconds,
+                Beam = _settings?.UseBeamSearch == true,
+                Language = _language,
+                ModelFile = System.IO.Path.GetFileName(_modelPath)
+            };
+
+            var startedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
+            try
+            {
+                var result = await RecognizeStreamingCoreAsync(audioData, meta, cancellationToken);
+
+                meta.ElapsedMs = System.Diagnostics.Stopwatch.GetElapsedTime(startedTimestamp).TotalMilliseconds;
+                meta.RawText = result.Text ?? string.Empty;
+                if (!result.Success) meta.Error = result.ErrorMessage;
+
+                AudioDumpSink.DumpSegment(audioData, meta);
+                return result;
+            }
+            catch (OperationCanceledException)
+            {
+                // Отмена записи — не ошибка распознавания, дампа нет.
+                throw;
+            }
+            catch (Exception ex)
+            {
+                meta.ElapsedMs = System.Diagnostics.Stopwatch.GetElapsedTime(startedTimestamp).TotalMilliseconds;
+                meta.Error = ex.Message;
+                AudioDumpSink.DumpSegment(audioData, meta);
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Ядро streaming-распознавания. meta != null только при включённом дампе:
+        /// метод заполняет в ней фактически применённые параметры движка.
+        /// </summary>
+        private async Task<RecognitionResult> RecognizeStreamingCoreAsync(AudioData audioData, SegmentDumpMeta? meta, CancellationToken cancellationToken)
         {
             if (!_isInitialized || _factory == null)
             {
@@ -226,6 +285,15 @@ namespace LWhisper.SpeechEngine
 
                 Log.Debug("Streaming recognition: duration={Duration:F1}s, audioContextSize={ContextSize} (raw={RawSize}), threads={Threads}, beam={Beam}",
                     durationSec, audioContextSize, rawContextSize, streamingThreads, useBeamSearch);
+
+                // CP1: мета дампа берёт ровно те значения, что ушли в native — те же локальные
+                // переменные, что и лог выше (их завёл CP0). Второго источника истины нет.
+                if (meta != null)
+                {
+                    meta.AudioContextSize = audioContextSize;
+                    meta.Threads = streamingThreads;
+                    meta.Beam = useBeamSearch;
+                }
 
                 var floatData = ConvertBytesToFloat(audioData.RawData);
 
@@ -283,6 +351,7 @@ namespace LWhisper.SpeechEngine
             }
             catch (Exception ex)
             {
+                if (meta != null) meta.UsedFallback = true;
                 Log.Warning(ex, "Streaming recognition с AudioContextSize failed — fallback на стандартный RecognizeAsync");
                 // P2: fallback идёт на общий _processor, который один на весь распознаватель.
                 // Вход сериализуем — иначе при параллелизме > 1 два сегмента войдут в native одновременно.

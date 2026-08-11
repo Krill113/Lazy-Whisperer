@@ -1,5 +1,6 @@
 using LWhisper.Core.Interfaces;
 using LWhisper.Core.Models;
+using LWhisper.SpeechEngine.Diagnostics;
 using NAudio.Wave;
 using Serilog;
 using System.IO;
@@ -87,6 +88,9 @@ namespace LWhisper.UI.WPF.Services
             _recorderReadyRaised = false;
             _recordingStartTime = DateTime.Now;
 
+            // CP1: закрыть предыдущую сессию дампа — следующая запись пойдёт в новую папку.
+            AudioDumpSink.ResetSession();
+
             _waveIn = new WaveInEvent
             {
                 WaveFormat = new WaveFormat(_sampleRate, _bitsPerSample, _channels),
@@ -104,6 +108,10 @@ namespace LWhisper.UI.WPF.Services
         private void OnDataAvailable(object? sender, WaveInEventArgs e)
         {
             if (!_isRecording || _currentSegmentBuffer == null) return;
+
+            // CP1: сырой поток сессии, до VAD и до pre-roll — то, что VAD выбросил, тоже сохраняется.
+            // При выключенном LWHISPER_DEBUG_AUDIO это один статический bool-чек, без аллокаций.
+            AudioDumpSink.AppendSessionPcm(e.Buffer, 0, e.BytesRecorded);
 
             // W0: поднять RecorderReady на первом фрейме (driver реально запустился)
             if (!_recorderReadyRaised)
@@ -395,6 +403,9 @@ namespace LWhisper.UI.WPF.Services
                 _waveIn = null;
                 _currentSegmentBuffer = null;
             }
+
+            // CP1: записать session.wav до всех ранних возвратов ниже.
+            AudioDumpSink.FlushSession(_sampleRate, _channels, _bitsPerSample);
 
             // Дальше работаем только с локальным finalBytes — общего состояния больше нет, лок не нужен.
             if (finalBytes.Length == 0)

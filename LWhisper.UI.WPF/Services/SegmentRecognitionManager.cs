@@ -1,6 +1,7 @@
 using LWhisper.Core.Interfaces;
 using LWhisper.Core.Models;
 using LWhisper.SpeechEngine;
+using LWhisper.SpeechEngine.Diagnostics;
 using Serilog;
 using System.Collections.Concurrent;
 
@@ -102,7 +103,7 @@ namespace LWhisper.UI.WPF.Services
                     RecognitionResult result;
                     if (_recognizer is WhisperSpeechRecognizer whisperRecognizer)
                     {
-                        result = await whisperRecognizer.RecognizeStreamingAsync(audioData, _cancellationTokenSource.Token);
+                        result = await whisperRecognizer.RecognizeStreamingAsync(audioData, segmentId, _cancellationTokenSource.Token);
                     }
                     else
                     {
@@ -145,6 +146,10 @@ namespace LWhisper.UI.WPF.Services
                             // Проверить на дубликаты с предыдущими сегментами (Whisper "галлюцинирует")
                             var previousText = GetPreviousSegmentsText();
                             var uniqueText = RemoveDuplicatePrefix(cleanedText, previousText);
+
+                            // CP1: текст после всей цепочки L0-L6 — для сверки с rawText из meta.jsonl.
+                            // Пустая строка здесь тоже информативна: значит фильтры съели сегмент целиком.
+                            AudioDumpSink.RecordPostFilterText(segmentId, uniqueText);
                             
                             if (!string.IsNullOrWhiteSpace(uniqueText))
                             {
