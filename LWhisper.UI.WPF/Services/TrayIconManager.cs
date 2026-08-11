@@ -42,19 +42,52 @@ namespace LWhisper.UI.WPF.Services
             _trayIcon.ContextMenu = contextMenu;
             _trayIcon.TrayMouseDoubleClick += (s, e) => ShowMicrophoneRequested?.Invoke();
 
-            // Клик по баллону «доступно обновление» открывает Настройки
-            _trayIcon.TrayBalloonTipClicked += (s, e) => SettingsRequested?.Invoke();
+            // Клик по баллону открывает Настройки ТОЛЬКО для тех баллонов, которые об этом просят
+            // («доступно обновление»). Окно настроек забирает фокус, а LWhisper вставляет текст в
+            // чужое активное окно — случайный клик по информационному баллону не должен уводить
+            // фокус из документа, в который пользователь только что диктовал.
+            _trayIcon.TrayBalloonTipClicked += (s, e) =>
+            {
+                if (_lastBalloonOpensSettings)
+                {
+                    SettingsRequested?.Invoke();
+                }
+            };
         }
 
         /// <summary>
         /// Ненавязчивое уведомление о доступном обновлении (баллон из трея)
         /// </summary>
+        /// <summary>
+        /// Открывает ли клик по ПОСЛЕДНЕМУ показанному баллону окно настроек.
+        /// Обработчик клика один на все баллоны, а уместен он не для каждого.
+        /// </summary>
+        private bool _lastBalloonOpensSettings;
+
         public void ShowUpdateNotification(string version)
         {
+            _lastBalloonOpensSettings = true;
             _trayIcon?.ShowBalloonTip(
                 "LWhisper — доступно обновление",
                 $"Вышла версия {version}. Нажмите, чтобы открыть Настройки и обновиться.",
                 BalloonIcon.Info);
+        }
+
+        /// <summary>
+        /// Ненавязчиво сообщить, что запись не дала текста, и назвать вероятную причину.
+        ///
+        /// Именно баллон из трея, а не окно: LWhisper вставляет текст в ЧУЖОЕ активное окно,
+        /// поэтому любой элемент UI, забирающий фокус, ломает основной сценарий. Раньше пустой
+        /// результат просто закрывал окно предпросмотра, и три разные причины (короткая запись,
+        /// тихая речь, галлюцинация) были для пользователя неотличимы.
+        /// </summary>
+        public void ShowNoSpeechNotification(string reason)
+        {
+            _lastBalloonOpensSettings = false;
+            _trayIcon?.ShowBalloonTip(
+                "LWhisper — текст не распознан",
+                reason,
+                BalloonIcon.Warning);
         }
 
         private Icon CreateMicrophoneIcon()

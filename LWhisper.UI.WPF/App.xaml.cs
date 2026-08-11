@@ -358,7 +358,8 @@ namespace LWhisper.UI.WPF
                     int parallelism = ComputeEffectiveParallelism(_settings);
                     _recognitionManager = new SegmentRecognitionManager(
                         _speechRecognizer,
-                        parallelism
+                        parallelism,
+                        _settings.Streaming
                     );
                     Log.Information("Параллелизм распознавания: {Parallel} (GpuFailed={GpuFailed})", parallelism, _settings.GpuFailed);
                     
@@ -649,9 +650,30 @@ namespace LWhisper.UI.WPF
             }
         }
 
+        /// <summary>
+        /// Идёт финализация предыдущей записи: она уже остановлена (<c>_isRecording == false</c>),
+        /// но задачи распознавания ещё считаются и результат ещё не собран.
+        ///
+        /// Без этого флага повторное нажатие хоткея в этом окне (а оно длится секунды — ровно
+        /// столько, сколько Whisper дораспознаёт хвост) запускало новую запись и вызывало
+        /// <c>SegmentRecognitionManager.Reset()</c> поверх живых задач прошлой записи. Reset не
+        /// отменяет их токен и чистит словарь результатов на месте, а счётчик сегментов начинает
+        /// заново с единицы — поэтому «догоняющий» результат прошлой фразы попадал в состояние
+        /// новой и молча подмешивался в текст, который вставляется в чужое окно.
+        /// </summary>
+        private volatile bool _isFinalizingRecording;
+
         private void OnRecordingStarted()
         {
             if (_isRecording) return;
+
+            if (_isFinalizingRecording)
+            {
+                // Виджет в этот момент показывает состояние Processing — пользователь видит,
+                // что приложение занято, поэтому молча игнорируем нажатие, без диалогов.
+                Log.Debug("Нажатие проигнорировано: идёт финализация предыдущей записи");
+                return;
+            }
 
             try
             {
@@ -714,6 +736,8 @@ namespace LWhisper.UI.WPF
             if (!_isRecording) return;
 
             _isRecording = false;
+            // Закрыть окно для повторного старта на всё время дораспознавания — см. поле.
+            _isFinalizingRecording = true;
             _widget?.SetState(WidgetState.Processing);
             _trayManager?.SetIcon(TrayIconState.Processing);
 
@@ -751,8 +775,34 @@ namespace LWhisper.UI.WPF
                         }
                         else
                         {
-                            Log.Warning("Потоковое распознавание не дало результата");
-                            
+                            // Назвать причину вместо молчаливого закрытия окна: пользователь иначе
+                            // видит только то, что «ничего не произошло», и не может отличить
+                            // слишком короткую запись от слишком тихой речи.
+                            int received = _recognitionManager.ReceivedSegmentCount;
+                            int skippedSilent = _recognitionManager.SkippedSilentCount;
+
+                            string reason;
+                            if (received == 0)
+                            {
+                                reason = "Запись оказалась слишком короткой — говорите чуть дольше перед остановкой.";
+                            }
+                            else if (skippedSilent >= received)
+                            {
+                                // Совет должен быть выполнимым: контрола для порога тишины в окне
+                                // настроек нет, он живёт только в settings.json.
+                                reason = "Речь была слишком тихой — говорите ближе к микрофону или громче.";
+                            }
+                            else
+                            {
+                                reason = "Распознавание не дало текста — подробности в журнале.";
+                            }
+
+                            Log.Warning("Потоковое распознавание не дало результата " +
+                                "(сегментов получено={Received}, отброшено как тишина={Skipped}): {Reason}",
+                                received, skippedSilent, reason);
+
+                            _trayManager?.ShowNoSpeechNotification(reason);
+
                             // Закрыть окно если распознавание не удалось
                             if (_previewWindow != null && _previewWindow.IsVisible)
                             {
@@ -816,6 +866,12 @@ namespace LWhisper.UI.WPF
                 {
                     MessageBox.Show($"Ошибка распознавания: {ex.Message}", "LWhisper", MessageBoxButton.OK, MessageBoxImage.Error);
                 });
+            }
+            finally
+            {
+                // Только здесь: любая ветка выхода — успех, пустой результат, исключение — обязана
+                // снять запрет, иначе запись перестанет запускаться до перезапуска приложения.
+                _isFinalizingRecording = false;
             }
         }
 
