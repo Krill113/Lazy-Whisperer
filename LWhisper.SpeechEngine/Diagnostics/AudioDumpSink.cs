@@ -226,13 +226,23 @@ namespace LWhisper.SpeechEngine.Diagnostics
         {
             if (!EnabledFlag) return null;
 
+            var existing = _sessionDirectory;
+            if (existing != null) return existing;
+
+            // Directory.CreateDirectory идемпотентен и безопасен при параллельном вызове (не бросает,
+            // если каталог уже есть) — создаём ВНЕ SessionLock. За тот же лок на потоке NAudio
+            // конкурирует AppendSessionPcm (каждые 30 мс, StreamingAudioRecorder.OnDataAvailable);
+            // держать его на время файлового I/O (особенно под антивирусом на %APPDATA%) означало бы
+            // рисковать потерянным фреймом микрофона в момент создания ПЕРВОЙ папки сессии.
+            var dir = Path.Combine(EnginePaths.DebugRoot, DateTime.Now.ToString("yyyyMMdd-HHmmss"));
+            Directory.CreateDirectory(dir);
+
             lock (SessionLock)
             {
-                if (_sessionDirectory != null) return _sessionDirectory;
-
-                var dir = Path.Combine(EnginePaths.DebugRoot, DateTime.Now.ToString("yyyyMMdd-HHmmss"));
-                Directory.CreateDirectory(dir);
-                _sessionDirectory = dir;
+                // Другой поток мог создать каталог раньше (гонка на первом обращении) — тогда
+                // используем его результат, а не наш только что созданный (безвредный дубль-каталог
+                // просто останется пустым и будет проигнорирован).
+                _sessionDirectory ??= dir;
 
                 if (!_overrideLogged)
                 {
