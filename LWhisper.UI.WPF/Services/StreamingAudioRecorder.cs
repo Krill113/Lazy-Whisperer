@@ -22,6 +22,31 @@ namespace LWhisper.UI.WPF.Services
         private readonly object _segmentLock = new object(); // Блокировка для EmitSegment
         private int _deviceNumber = 0;
 
+        /// <summary>
+        /// Технический минимум длительности ФИНАЛЬНОГО сегмента — того, что формируется, когда
+        /// пользователь сам остановил запись.
+        ///
+        /// Раньше здесь применялся <c>MinSegmentDurationMs</c> из настроек, и это уничтожало речь:
+        /// по 8 дням боевых логов порог сработал 19 раз (198-1990 мс), а на промежуточном пути —
+        /// ни разу. Проверка дампов подтвердила, что терялась настоящая речь: в одном случае
+        /// «Очень длинная фраза», отброшенная на 1378 мс.
+        ///
+        /// Смысл настройки <c>MinSegmentDurationMs</c> — когда РЕЗАТЬ поток на сегменты, а не
+        /// стоит ли вообще распознавать то, что пользователь осознанно отправил кнопкой «стоп».
+        /// Поэтому здесь отдельная константа, и её единственная задача — не звать движок на
+        /// вырожденном буфере в пару кадров. Семантическую отбраковку делает амплитудный гейт
+        /// в SegmentRecognitionManager и фильтры после распознавания.
+        ///
+        /// ПРИНЯТЫЙ РИСК. В полосе 250 мс … MinSegmentDurationMs теперь проходят и короткие ГРОМКИЕ
+        /// неречевые звуки (щелчок мыши по виджету, кашель): амплитудный гейт настроен отсекать
+        /// тишину, а не транзиенты. Раньше их снимал порог длительности — вместе с настоящей речью.
+        /// Полоса выбрана осознанно: именно в ней лежали все 19 задокументированных потерь.
+        /// Дроп и приём таких сегментов логируются на уровне Information — если в журнале начнут
+        /// появляться короткие бессмысленные вставки, откат стоит одну строку: вернуть здесь
+        /// _settings.MinSegmentDurationMs.
+        /// </summary>
+        private const int FinalSegmentMinDurationMs = 250;
+
         // VAD компонент
         private readonly IVoiceActivityDetector _vad;
         private readonly StreamingSettings _settings;
@@ -415,9 +440,10 @@ namespace LWhisper.UI.WPF.Services
 
             int bytesPerSample = _sampleRate * _channels * _bitsPerSample / 8; // 32000 байт/с
             double totalDuration = (finalBytes.Length / (double)bytesPerSample) * 1000.0;
-            if (totalDuration < _settings.MinSegmentDurationMs)
+            if (totalDuration < FinalSegmentMinDurationMs)
             {
-                Log.Debug("Финальный сегмент слишком короткий ({Duration}мс), игнорируется", (int)totalDuration);
+                Log.Information("Финальный сегмент {Duration}мс короче технического минимума {Min}мс, игнорируется",
+                    (int)totalDuration, FinalSegmentMinDurationMs);
                 return new AudioData();
             }
 
@@ -430,9 +456,10 @@ namespace LWhisper.UI.WPF.Services
             {
                 int chunkSize = Math.Min(maxBytes, finalBytes.Length - offset);
                 double chunkDurationMs = (chunkSize / (double)bytesPerSample) * 1000.0;
-                if (chunkDurationMs < _settings.MinSegmentDurationMs)
+                if (chunkDurationMs < FinalSegmentMinDurationMs)
                 {
-                    Log.Debug("Финальный остаток {Duration}мс слишком короткий, пропускается", (int)chunkDurationMs);
+                    Log.Information("Финальный остаток {Duration}мс короче технического минимума {Min}мс, пропускается",
+                        (int)chunkDurationMs, FinalSegmentMinDurationMs);
                     break;
                 }
 
