@@ -80,6 +80,17 @@ namespace LWhisper.UI.WPF.Services
         }
 
         /// <summary>
+        /// Полная независимая копия настроек (включая вложенный Streaming) — через JSON, как в файле.
+        /// Окно настроек правит копию: «Отмена» не должна задевать живой объект, а «Сохранить» —
+        /// терять поля, которых окно не показывает (позиция виджета, флаги GPU).
+        /// </summary>
+        public static AppSettings Clone(AppSettings source)
+        {
+            var json = JsonSerializer.Serialize(source);
+            return JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+        }
+
+        /// <summary>
         /// Сохранить настройки в файл
         /// </summary>
         public void Save(AppSettings settings)

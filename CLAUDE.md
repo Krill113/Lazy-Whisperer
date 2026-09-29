@@ -51,6 +51,7 @@ All user data lives in `%APPDATA%\LWhisper\`:
 - `Models\ggml-{size}.bin` — Whisper model files (downloaded on-demand via Settings UI)
 - `logs\log-*.txt` — Serilog daily rotation, 10MB limit, 7-day retention
 - `debug\{session}\` — audio dumps, created only when `LWHISPER_DEBUG_AUDIO` is on (see below)
+- `%LOCALAPPDATA%\LWhisper\gpu-risk.inprogress`, `gpu-crash-count` — GPU crash guard state (`GpuSafetyGuard`); machine-local on purpose, not roamed
 
 ## DevTools & MCP (offline measurement bench)
 
@@ -137,14 +138,16 @@ Desktop Windows-приложение для офлайн голосового в
 - `WidgetPositionX`, `WidgetPositionY` — Widget position persistence
 - `RecognitionLanguage` — Default "auto", supports "ru", "en"
 - `WhisperModelSize` — Default "small" (tiny, small, medium, large)
+- `UseGpu` — Default true. User choice only (Settings checkbox). GPU (Vulkan) is attempted on every start unless the user turned it off or `GpuSafetyGuard` disabled it: the guard keeps a marker only during "risk windows" (GPU model init; GPU compute until the first success, see `GpuComputeTracker`) and disables GPU after 2 consecutive processes died inside a window (driver crash) — machine-local state in `%LOCALAPPDATA%\LWhisper`, never written to the roaming `settings.json`; a tray balloon tells the user, re-enabling the checkbox resets it. If GPU init throws a managed exception, the engine is retried on CPU instead of falling back to Mock
+- `GpuFailed` — hint only: last detected backend was CPU. Drives parallelism clipping before engine init; never blocks GPU probing. Detection is `GpuBackendDetector` over the native whisper.cpp log (`whisper_model_load: <backend> total size`), NOT `GetRuntimeInfo()` — that string lists CPU features only and never mentions Vulkan
 - `Streaming` — StreamingSettings object with VAD threshold parameters
 - `Enabled` — Default false
-- `PauseThresholdMs` — Default 1000ms (segment boundary detection)
+- `PauseThresholdMs` — Default 1500ms (segment boundary detection)
 - `MinSegmentDurationMs` — Default 1500ms (minimum segment length)
 - `MaxSegmentDurationMs` — Default 15000ms (max segment length)
 - `AutoStopOnLongPause` — Default false
 - `AutoStopPauseDurationMs` — Default 3000ms
-- `MaxParallelRecognitions` — Default 3 (concurrent Whisper recognition tasks; clipped to 2 in CPU-only mode)
+- `MaxParallelRecognitions` — Default 3 (concurrent Whisper recognition tasks; clipped to 2 when the engine runs on CPU: `GpuFailed` hint from the previous run, or GPU disabled now)
 - `CompressionRatioThreshold` — Default 2.4 (gzip ratio above which a segment is dropped as repetitive garbage)
 - `SilenceMaxAmplitudeThreshold` — Default 0.03 (peak amplitude below which a segment is treated as silence and never reaches the engine)
 - Solution uses Debug|Any CPU, Debug|x64, Debug|x86, Release variants

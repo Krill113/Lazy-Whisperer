@@ -26,7 +26,7 @@ public sealed class EngineUnavailableException : Exception
 /// второй реализации быть не должно.
 ///
 /// Идёт всегда по streaming-пути (RecognizeStreamingAsync) — это ровно тот путь, который тюнит волна.
-/// Стенд CPU-only: распознаватель создаётся с gpuFailed:true, Vulkan-рантайм в проект не подключён.
+/// Стенд CPU-only: распознаватель создаётся с forceCpu:true, Vulkan-рантайм в проект не подключён.
 /// Рычаги ctx/threads передаются движку через переменные окружения §4 скелета; до CP5/CP6
 /// движок их игнорирует, но ранер выставляет их уже сейчас — чтобы заработать без правок.
 /// </summary>
@@ -96,7 +96,7 @@ public sealed class TranscribeRunner : IDisposable
         // C2 (CP6): стенд отдаёт движку тот же параллелизм, с каким сам гоняет прогоны —
         // иначе режим divided на стенде и в приложении считал бы разный бюджет.
         var recognizer = new WhisperSpeechRecognizer(
-            _modelPath, _language, gpuFailed: !_gpu, settings: settings,
+            _modelPath, _language, forceCpu: !_gpu, settings: settings,
             initialPrompt: _initialPrompt, effectiveParallelism: effectiveParallelism);
         try
         {
@@ -164,6 +164,8 @@ public sealed class TranscribeRunner : IDisposable
         Log.Information("Стенд: файлов {Files}, плеч {Arms}, повторов {Repeat}, всего прогонов {Total}",
             sources.Count, ctxArms.Count * threadArms.Count * beamArms.Count, options.Repeat, totalRuns);
 
+        // Движки, реально использованные ЭТИМ отчётом (кэш _engines живёт между вызовами MCP)
+        var usedEngines = new HashSet<WhisperSpeechRecognizer>();
         var report = new RunReport
         {
             Tag = options.Tag,
@@ -200,6 +202,7 @@ public sealed class TranscribeRunner : IDisposable
                         // Движок берётся из кэша: модель грузится один раз на (модель, язык, beam),
                         // а не на каждое плечо сетки. Диспозится в TranscribeRunner.Dispose().
                         var recognizer = await GetOrCreateRecognizerAsync(beam, Math.Max(1, options.Parallel));
+                        usedEngines.Add(recognizer);
 
                         runtimeInfo ??= EngineInfo.SafeRuntimeInfo();
 
@@ -250,7 +253,8 @@ public sealed class TranscribeRunner : IDisposable
 
         // Строка рантайма доступна только после загрузки нативной библиотеки — дописываем в снимок.
         engineInfo.RuntimeInfo = runtimeInfo ?? "";
-        engineInfo.Gpu = _gpu;
+        // Факт, а не запрос: GPU засчитывается, только если движок доказал его нативным логом
+        engineInfo.Gpu = usedEngines.Any(e => e.IsUsingGpu);
         report.Engine = engineInfo;
         report.FinishedUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
         report.Summary = Statistics.Summarize(report.Runs);

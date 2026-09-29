@@ -38,23 +38,28 @@ namespace LWhisper.UI.WPF.Views
             public string StatusIndicator { get; init; } = "";
         }
 
+        /// <summary>Как чекбокс «Использовать видеокарту» был показан при открытии окна.</summary>
+        public bool GpuCheckboxShown { get; private set; }
+
+        /// <summary>Как чекбокс стоит сейчас. Что сохранить, решает App через GpuSettingsResolver.</summary>
+        public bool GpuCheckboxNow => UseGpuCheckBox.IsChecked == true;
+
+        private readonly bool _gpuDisabledByGuard;
+
+        /// <param name="engineDeviceStatus">Где сейчас работает Whisper — показывается под чекбоксом GPU.</param>
+        /// <param name="gpuDisabledByGuard">GPU выключен защитой от сбоев драйвера — чекбокс показывается снятым.</param>
         public SettingsWindow(AppSettings currentSettings, List<string> audioDevices,
-            UpdateService? updateService = null, UpdateInfo? availableUpdate = null)
+            UpdateService? updateService = null, UpdateInfo? availableUpdate = null,
+            string? engineDeviceStatus = null, bool gpuDisabledByGuard = false)
         {
+            _gpuDisabledByGuard = gpuDisabledByGuard;
             InitializeComponent();
 
-            Settings = new AppSettings
-            {
-                RecordingMode = currentSettings.RecordingMode,
-                HotkeyBinding = currentSettings.HotkeyBinding,
-                AutoInsertDelaySeconds = currentSettings.AutoInsertDelaySeconds,
-                AutoInsertEnabled = currentSettings.AutoInsertEnabled,
-                SelectedAudioDevice = currentSettings.SelectedAudioDevice,
-                RecognitionLanguage = currentSettings.RecognitionLanguage,
-                WhisperModelSize = currentSettings.WhisperModelSize,
-                AutoUpdateCheckEnabled = currentSettings.AutoUpdateCheckEnabled,
-                Streaming = currentSettings.Streaming ?? new StreamingSettings()
-            };
+            // Полная копия: окно не видит часть полей (позиция виджета, флаги GPU), и ручное
+            // перечисление их теряло при «Сохранить», а общий Streaming менялся даже при «Отмене»
+            Settings = SettingsManager.Clone(currentSettings);
+            Settings.Streaming ??= new StreamingSettings();
+            EngineDeviceStatusText.Text = $"Сейчас распознаёт: {engineDeviceStatus ?? "не определено"}";
 
             _updateService = updateService ?? new UpdateService();
             _availableUpdate = availableUpdate;
@@ -282,6 +287,8 @@ namespace LWhisper.UI.WPF.Views
             VadAggressivenessSlider.Value = Settings.Streaming?.VadAggressiveness ?? 2;
             PostSpeechPaddingSlider.Value = Settings.Streaming?.PostSpeechPaddingMs ?? 400;
             UseBeamSearchCheckBox.IsChecked = Settings.Streaming?.UseBeamSearch ?? false;
+            GpuCheckboxShown = GpuPolicy.CheckboxShown(Settings.UseGpu, _gpuDisabledByGuard);
+            UseGpuCheckBox.IsChecked = GpuCheckboxShown;
 
             // Выбрать язык распознавания
             foreach (System.Windows.Controls.ComboBoxItem item in LanguageComboBox.Items)

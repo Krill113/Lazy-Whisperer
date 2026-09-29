@@ -34,7 +34,7 @@ public sealed class EngineInfo
     /// <summary>Строка WhisperFactory.GetRuntimeInfo(); пуста, пока нативный рантайм не загружен.</summary>
     public string RuntimeInfo { get; set; } = "";
 
-    /// <summary>Стенд всегда CPU-only: распознаватель создаётся с gpuFailed:true.</summary>
+    /// <summary>Работала ли модель фактически на GPU (стенд CPU-only: распознаватель создаётся с forceCpu:true).</summary>
     public bool Gpu { get; set; }
 
     public bool DumpEnabled { get; set; }

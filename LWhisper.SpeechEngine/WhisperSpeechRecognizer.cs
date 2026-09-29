@@ -3,6 +3,8 @@ using LWhisper.Core.Models;
 using LWhisper.SpeechEngine.Diagnostics;
 using Whisper.net;
 using Whisper.net.Ggml;
+using Whisper.net.LibraryLoader;
+using Whisper.net.Logger;
 using Serilog;
 
 namespace LWhisper.SpeechEngine
@@ -16,7 +18,7 @@ namespace LWhisper.SpeechEngine
         private WhisperProcessor? _processor;
         private readonly string _modelPath;
         private readonly string _language;
-        private readonly bool _gpuFailed;
+        private readonly bool _forceCpu;
         private bool _isInitialized;
         private bool _isUsingGpu;
         private readonly StreamingSettings? _settings;
@@ -36,20 +38,65 @@ namespace LWhisper.SpeechEngine
         public bool IsReady => _isInitialized;
 
         /// <summary>
-        /// True если при текущей инициализации GPU (Vulkan) не удалось загрузиться.
-        /// App.xaml.cs читает это свойство после InitializeAsync() чтобы сохранить флаг в настройках.
+        /// Где фактически работает модель после InitializeAsync(): GPU, CPU или Unknown (признаков не хватило).
+        /// App.xaml.cs сохраняет доказанный результат как подсказку для расчёта параллелизма.
         /// </summary>
-        public bool GpuInitFailed { get; private set; }
+        public GpuDetectionResult? GpuDetection { get; private set; }
 
+        /// <summary>True если модель работает на GPU (доказано нативным логом).</summary>
+        public bool IsUsingGpu => _isUsingGpu;
+
+        /// <summary>
+        /// Опасное окно вокруг вычислений на GPU до первого успеха (защита от сбоя драйвера).
+        /// Задаётся приложением после инициализации, если модель не на CPU; null — окна нет.
+        /// </summary>
+        public GpuComputeTracker? GpuTracker { get; set; }
+
+        // Нативный лог whisper.cpp. Логгер регистрируется ОДИН раз на процесс и не снимается:
+        // LogProvider глобален, а нативные колбэки идут из потоков распознавания — добавление и снятие
+        // логгера на каждой переинициализации (App.ApplySettings при живых сегментах) было бы гонкой.
+        // Строки собираются только пока открыт захват. Инициализации в процессе последовательны
+        // (App — на UI-потоке, DevTools MCP — под семафором), поэтому захват один на процесс.
+        private static readonly object NativeLogLock = new object();
+        private static IDisposable? _nativeLogSubscription;
+        private static List<string>? _nativeLogCapture;
+
+        private static void BeginNativeLogCapture()
+        {
+            lock (NativeLogLock)
+            {
+                _nativeLogSubscription ??= LogProvider.AddLogger((_, message) =>
+                {
+                    if (message == null) return;
+                    lock (NativeLogLock) _nativeLogCapture?.Add(message.TrimEnd());
+                });
+                _nativeLogCapture = new List<string>();
+            }
+        }
+
+        private static string[] EndNativeLogCapture()
+        {
+            lock (NativeLogLock)
+            {
+                var lines = _nativeLogCapture?.ToArray() ?? Array.Empty<string>();
+                _nativeLogCapture = null;
+                return lines;
+            }
+        }
+
+        /// <param name="forceCpu">
+        /// true — не пробовать GPU вовсе: грузится только CPU-рантайм. Ставится, когда пользователь
+        /// выключил GPU в настройках или прошлая попытка инициализации GPU уронила процесс.
+        /// </param>
         /// <param name="effectiveParallelism">
         /// C2 (CP6): сколько распознаваний реально может идти параллельно (streaming-бюджет).
         /// 1 = один сегмент в полёте. Влияет только на режим ThreadBudgetMode.Divided.
         /// </param>
-        public WhisperSpeechRecognizer(string modelPath, string language = "auto", bool gpuFailed = false, StreamingSettings? settings = null, string? initialPrompt = null, int effectiveParallelism = 1)
+        public WhisperSpeechRecognizer(string modelPath, string language = "auto", bool forceCpu = false, StreamingSettings? settings = null, string? initialPrompt = null, int effectiveParallelism = 1)
         {
             _modelPath = modelPath;
             _language = language;
-            _gpuFailed = gpuFailed;
+            _forceCpu = forceCpu;
             _settings = settings;
             _initialPrompt = string.IsNullOrWhiteSpace(initialPrompt) ? null : initialPrompt;
             _effectiveParallelism = effectiveParallelism;
@@ -75,73 +122,86 @@ namespace LWhisper.SpeechEngine
             {
                 try
                 {
-                    if (_gpuFailed)
+                    if (_forceCpu)
                     {
-                        // PERF-03: GPU ранее не работала — пропускаем Vulkan/CUDA, используем только CPU
-                        Whisper.net.LibraryLoader.RuntimeOptions.RuntimeLibraryOrder =
-                            new List<Whisper.net.LibraryLoader.RuntimeLibrary> { Whisper.net.LibraryLoader.RuntimeLibrary.Cpu };
-                        Log.Information("GPU ранее не инициализировалась — используется только CPU рантайм (RuntimeLibraryOrder=[Cpu])");
+                        // GPU выключен приложением (выбор пользователя или защита от сбоев) — Vulkan/CUDA не загружаем вовсе.
+                        // Порядок рантаймов процесс-глобальный и действует только до первой загрузки
+                        // нативной библиотеки: при переинициализации в том же процессе решает UseGpu=false.
+                        RuntimeOptions.RuntimeLibraryOrder = new List<RuntimeLibrary> { RuntimeLibrary.Cpu };
+                        Log.Information("GPU выключен приложением — используется только CPU (forceCpu, RuntimeLibraryOrder=[Cpu])");
                     }
-
-                    _factory = WhisperFactory.FromPath(_modelPath, new WhisperFactoryOptions
-                    {
-                        UseGpu = !_gpuFailed,
-                        // PERF-05: Flash Attention оптимизирован для GPU; на CPU может замедлять — отключаем
-                        UseFlashAttention = false
-                    });
 
                     // P3: число потоков вычисляется ОДИН раз и переиспользуется в строке лога ниже.
                     // "Whisper runtime: … Threads: N" обязана печатать то, что реально ушло в WithThreads,
                     // иначе smoke CP6 (бюджет потоков) врёт. CP6: значение теперь считается по формуле бюджета.
                     var builderThreads = ResolveThreads();
 
-                    var builder = _factory.CreateBuilder()
-                        .WithLanguage(_language)
-                        // PERF-02: WithPrompt("") убран — пустая строка это не "нет промпта", а промпт с пустой строкой
-                        .WithNoContext()
-                        .WithSingleSegment()
-                        // PERF-01: использовать все логические ядра CPU вместо дефолтных 4
-                        .WithThreads(builderThreads)
-                        // W1: antigallucination-параметры
-                        .WithTemperature(0.0f)
-                        .WithEntropyThreshold(2.4f)
-                        .WithLogProbThreshold(-1.0f)
-                        // Если «да/нет/ок» начинают теряться — снизить до 0.45f
-                        .WithNoSpeechThreshold(0.6f);
+                    // Нативный лог whisper.cpp ловится на время создания фабрики и процессора:
+                    // по нему видно, на какой бэкенд легли веса модели и какое устройство выбрано.
+                    string[] capturedLog;
+                    BeginNativeLogCapture();
+                    try
+                    {
+                        _factory = WhisperFactory.FromPath(_modelPath, new WhisperFactoryOptions
+                        {
+                            UseGpu = !_forceCpu,
+                            // PERF-05: Flash Attention оптимизирован для GPU; на CPU может замедлять — отключаем
+                            UseFlashAttention = false
+                        });
 
-                    // D5: vocabulary через WithPrompt — биас Whisper на доменную лексику
-                    if (_initialPrompt != null)
-                    {
-                        builder = builder.WithPrompt(_initialPrompt);
-                        Log.Information("Whisper prompt активен: {Length} символов", _initialPrompt.Length);
-                    }
+                        var builder = _factory.CreateBuilder()
+                            .WithLanguage(_language)
+                            // PERF-02: WithPrompt("") убран — пустая строка это не "нет промпта", а промпт с пустой строкой
+                            .WithNoContext()
+                            .WithSingleSegment()
+                            // PERF-01: использовать все логические ядра CPU вместо дефолтных 4
+                            .WithThreads(builderThreads)
+                            // W1: antigallucination-параметры
+                            .WithTemperature(0.0f)
+                            .WithEntropyThreshold(2.4f)
+                            .WithLogProbThreshold(-1.0f)
+                            // Если «да/нет/ок» начинают теряться — снизить до 0.45f
+                            .WithNoSpeechThreshold(0.6f);
 
-                    // W1: beam search toggle
-                    if (_settings?.UseBeamSearch == true)
-                    {
-                        if (builder.WithBeamSearchSamplingStrategy() is BeamSearchSamplingStrategyBuilder beamBuilder)
-                            beamBuilder.WithBeamSize(5);
-                        Log.Information("Whisper sampling: BeamSearch(5)");
+                        // D5: vocabulary через WithPrompt — биас Whisper на доменную лексику
+                        if (_initialPrompt != null)
+                        {
+                            builder = builder.WithPrompt(_initialPrompt);
+                            Log.Information("Whisper prompt активен: {Length} символов", _initialPrompt.Length);
+                        }
+
+                        // W1: beam search toggle
+                        if (_settings?.UseBeamSearch == true)
+                        {
+                            if (builder.WithBeamSearchSamplingStrategy() is BeamSearchSamplingStrategyBuilder beamBuilder)
+                                beamBuilder.WithBeamSize(5);
+                            Log.Information("Whisper sampling: BeamSearch(5)");
+                        }
+                        else
+                        {
+                            builder.WithGreedySamplingStrategy();
+                            Log.Information("Whisper sampling: Greedy");
+                        }
+                        _processor = builder.Build();
                     }
-                    else
+                    finally
                     {
-                        builder.WithGreedySamplingStrategy();
-                        Log.Information("Whisper sampling: Greedy");
+                        capturedLog = EndNativeLogCapture();
                     }
-                    _processor = builder.Build();
 
                     var runtimeInfo = WhisperFactory.GetRuntimeInfo();
-                    _isUsingGpu = runtimeInfo != null &&
-                        (runtimeInfo.Contains("vulkan", StringComparison.OrdinalIgnoreCase) ||
-                         runtimeInfo.Contains("cuda", StringComparison.OrdinalIgnoreCase));
+                    var detection = GpuBackendDetector.Detect(capturedLog, RuntimeOptions.LoadedLibrary?.ToString());
+                    GpuDetection = detection;
+                    _isUsingGpu = detection.Usage == GpuUsage.Gpu;
 
-                    // PERF-03: Если GPU была запрошена но не загрузилась — пометить для сохранения в настройках
-                    if (!_gpuFailed && !_isUsingGpu)
-                    {
-                        GpuInitFailed = true;
-                        Log.Warning("GPU (Vulkan/CUDA) запрошена но не активна — флаг GpuInitFailed=true. " +
-                            "При следующем запуске будет использован только CPU рантайм");
-                    }
+                    if (detection.Usage == GpuUsage.Gpu)
+                        Log.Information("Whisper работает на GPU: {Device} ({Backend}, рантайм {Library})",
+                            detection.DeviceName ?? "устройство не названо", detection.ModelBackend, RuntimeOptions.LoadedLibrary);
+                    else if (detection.Usage == GpuUsage.Cpu)
+                        Log.Information("Whisper работает на CPU: {Evidence} (рантайм {Library}, GPU запрошен: {Requested})",
+                            detection.Evidence, RuntimeOptions.LoadedLibrary, !_forceCpu);
+                    else
+                        Log.Warning("Не удалось определить, где работает Whisper: {Evidence}. Флаги GPU не меняются", detection.Evidence);
 
                     Log.Information("Whisper runtime: {RuntimeInfo}, GPU: {IsGpu}, Threads: {Threads}",
                         runtimeInfo ?? "unknown", _isUsingGpu, builderThreads);
@@ -170,6 +230,8 @@ namespace LWhisper.SpeechEngine
 
             try
             {
+                // Опасное окно защиты от сбоя драйвера — до первого успеха на GPU (null после него)
+                using var gpuScope = GpuTracker?.Enter();
                 var floatData = ConvertBytesToFloat(audioData.RawData);
                 
                 var segments = new List<string>();
@@ -179,6 +241,7 @@ namespace LWhisper.SpeechEngine
                 }
 
                 var text = string.Join(" ", segments).Trim();
+                gpuScope?.MarkSuccess();
 
                 return new RecognitionResult
                 {
@@ -338,6 +401,8 @@ namespace LWhisper.SpeechEngine
                     meta.Beam = useBeamSearch;
                 }
 
+                // Опасное окно защиты от сбоя драйвера — до первого успеха на GPU (null после него)
+                using var gpuScope = GpuTracker?.Enter();
                 var floatData = ConvertBytesToFloat(audioData.RawData);
 
                 // Создаём отдельный процессор с оптимизированным контекстным окном
@@ -383,6 +448,7 @@ namespace LWhisper.SpeechEngine
                 }
 
                 var text = string.Join(" ", segments).Trim();
+                gpuScope?.MarkSuccess();
 
                 return new RecognitionResult
                 {

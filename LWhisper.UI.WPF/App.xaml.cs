@@ -32,6 +32,19 @@ namespace LWhisper.UI.WPF
         private Mutex? _singleInstanceMutex;
         private UpdateService? _updateService;
         private UpdateInfo? _availableUpdate;
+        // Где фактически работает Whisper — показывается в окне настроек рядом с чекбоксом GPU
+        private string _engineDeviceStatus = "не определено";
+        // Процесс загрузил только CPU-рантайм Whisper: нативная библиотека грузится один раз на процесс,
+        // поэтому включённая в настройках видеокарта заработает только после перезапуска
+        private bool _cpuOnlyRuntimePinned;
+        private string? _lastGpuDeviceName;
+        private bool _lastGpuIsIntegrated;
+        // Защита от сбоев драйвера GPU; создаётся в OnStartup после проверки единственного экземпляра
+        private GpuSafetyGuard? _gpuGuard;
+        // GPU выключен в этом запуске (пользователем, защитой или после неудачной инициализации)
+        private bool _effectiveForceCpu;
+        // Защита выключила GPU до создания трея — уведомление показывается, когда трей появится
+        private bool _gpuDisabledNoticePending;
 
         // Компоненты потокового режима
         private IVoiceActivityDetector? _vad;
@@ -87,6 +100,11 @@ namespace LWhisper.UI.WPF
                 return;
             }
 
+            // Разбор итога прошлого запуска — строго после мьютекса: второй экземпляр иначе засчитал бы
+            // сбой и снял маркер живого первого
+            _gpuGuard = new GpuSafetyGuard(AppPaths.GpuSafetyFolder);
+            _gpuDisabledNoticePending = _gpuGuard.EvaluateStartup();
+
             try
             {
                 _settingsManager = new SettingsManager();
@@ -113,6 +131,11 @@ namespace LWhisper.UI.WPF
                 _trayManager.ShowMicrophoneRequested += OnShowMicrophoneRequested;
                 _trayManager.SettingsRequested += OnSettingsRequested;
                 _trayManager.ExitRequested += OnExitRequested;
+                if (_gpuDisabledNoticePending)
+                {
+                    _trayManager.ShowGpuDisabledNotification();
+                    _gpuDisabledNoticePending = false;
+                }
 
                 // Позиция виджета - правый нижний угол по умолчанию
                 double defaultX = SystemParameters.PrimaryScreenWidth - 150;
@@ -211,25 +234,153 @@ namespace LWhisper.UI.WPF
         /// <summary>
         /// C2 (CP6): единственная точка расчёта эффективного параллелизма распознавания.
         /// W1: adaptive parallelism — на CPU клиппим до 2, на GPU респектим юзерское значение.
+        /// «На CPU» = подсказка прошлого запуска (GpuFailed) ИЛИ GPU выключен сейчас (forceCpu).
         /// При выключенном streaming в полёте всегда один сегмент → параллелизм 1.
         /// Читает только настройки (не поле _useStreamingMode): вызывается в том числе из
         /// InitializeSpeechRecognizer(), который отрабатывает РАНЬШЕ InitializeAudioRecorder().
         /// </summary>
-        private static int ComputeEffectiveParallelism(AppSettings settings)
+        private static int ComputeEffectiveParallelism(AppSettings settings, bool forceCpu)
         {
             var streaming = settings.Streaming;
-            if (streaming == null || !streaming.Enabled) return 1;
-
-            return settings.GpuFailed
-                ? Math.Min(2, streaming.MaxParallelRecognitions)
-                : streaming.MaxParallelRecognitions;
+            return GpuPolicy.EffectiveParallelism(streaming?.Enabled == true,
+                streaming?.MaxParallelRecognitions ?? 1, settings.GpuFailed, forceCpu);
         }
+
+        /// <summary>
+        /// Сохранить доказанный итог определения бэкенда как подсказку для параллелизма и обновить
+        /// статус для окна настроек. Unknown флаг не трогает: провал сохраняется только доказанным.
+        /// Вызывается ДО InitializeAudioRecorder(), поэтому менеджер сегментов сразу получает
+        /// параллелизм по факту этого запуска.
+        /// </summary>
+        private void UpdateGpuHint(LWhisper.SpeechEngine.Diagnostics.GpuDetectionResult? detection, bool gpuAttempted, string? gpuInitError)
+        {
+            if (detection == null) return;
+
+            // ggml-vulkan перечисляет устройства один раз на процесс — при переинициализации имени в логе нет
+            if (detection.DeviceName != null) _lastGpuDeviceName = detection.DeviceName;
+            var deviceName = detection.DeviceName ?? _lastGpuDeviceName ?? detection.ModelBackend;
+            if (detection.IsIntegrated == true) _lastGpuIsIntegrated = true;
+            else if (detection.IsIntegrated == false) _lastGpuIsIntegrated = false;
+
+            var onCpu = detection.Usage == LWhisper.SpeechEngine.Diagnostics.GpuUsage.Cpu;
+            _engineDeviceStatus = detection.Usage switch
+            {
+                LWhisper.SpeechEngine.Diagnostics.GpuUsage.Gpu when _lastGpuIsIntegrated =>
+                    $"встроенная видеокарта — {deviceName} (если медленнее процессора, выключите)",
+                LWhisper.SpeechEngine.Diagnostics.GpuUsage.Gpu => $"видеокарта — {deviceName}",
+                // Выбор пользователя важнее решения защиты: его он и должен увидеть
+                _ when onCpu && !_settings.UseGpu => "процессор (видеокарта выключена вами)",
+                _ when onCpu && _gpuGuard?.IsDisabled == true =>
+                    "процессор (видеокарта выключена после повторных сбоев драйвера — включите, если драйвер обновлён)",
+                _ when onCpu && gpuInitError != null => $"процессор (видеокарта не справилась: {gpuInitError})",
+                _ when onCpu && _cpuOnlyRuntimePinned => "процессор (видеокарта включится после перезапуска приложения)",
+                _ when onCpu => "процессор (подходящая видеокарта не найдена)",
+                _ => "не определено"
+            };
+
+            // Подсказка лежит в перемещаемом settings.json — пишется только доказанный результат пробы GPU
+            if (!GpuPolicy.ShouldUpdateGpuFailedHint(gpuAttempted, detection.Usage)) return;
+
+            if (_settings.GpuFailed != onCpu)
+            {
+                _settings.GpuFailed = onCpu;
+                _settingsManager?.Save(_settings);
+                Log.Information("Подсказка GpuFailed обновлена по факту: {GpuFailed}", onCpu);
+            }
+        }
+
+        /// <summary>
+        /// Создать и синхронно инициализировать распознаватель. При работе с GPU инициализация идёт
+        /// внутри опасного окна защиты, а вычисления до первого успеха — под GpuComputeTracker.
+        /// Управляемое исключение — не сбой драйвера: окно закрывается, исключение уходит наверх.
+        /// </summary>
+        private LWhisper.SpeechEngine.WhisperSpeechRecognizer CreateWhisperRecognizer(
+            string modelPath, string? vocabularyPrompt, int effectiveParallelism, bool forceCpu)
+        {
+            // Нативная библиотека грузится один раз на процесс: если её впервые грузит CPU-only
+            // инициализация, видеокарта в этом процессе уже недоступна
+            var runtimeLoadedBefore = Whisper.net.LibraryLoader.RuntimeOptions.LoadedLibrary != null;
+
+            var recognizer = new LWhisper.SpeechEngine.WhisperSpeechRecognizer(modelPath, _settings.RecognitionLanguage,
+                forceCpu, _settings.Streaming, vocabularyPrompt, effectiveParallelism);
+
+            try
+            {
+                using (forceCpu ? null : _gpuGuard?.OpenWindow())
+                {
+                    // ВАЖНО: Инициализировать асинхронно
+                    Task.Run(async () =>
+                    {
+                        await recognizer.InitializeAsync();
+                        Log.Information("WhisperSpeechRecognizer инициализирован и готов к работе");
+                    }).Wait(); // Ждем завершения инициализации
+                }
+            }
+            catch
+            {
+                recognizer.Dispose();
+                throw;
+            }
+
+            if (forceCpu && !runtimeLoadedBefore) _cpuOnlyRuntimePinned = true;
+
+            var afterInit = GpuPolicy.AfterInit(forceCpu,
+                recognizer.GpuDetection?.Usage ?? LWhisper.SpeechEngine.Diagnostics.GpuUsage.Unknown);
+            if (_gpuGuard != null && afterInit != GpuPolicy.AfterInitAction.None)
+            {
+                if (afterInit == GpuPolicy.AfterInitAction.ResetCrashCount)
+                {
+                    _gpuGuard.ResetCount();
+                }
+                else
+                {
+                    var guard = _gpuGuard;
+                    recognizer.GpuTracker = new LWhisper.SpeechEngine.Diagnostics.GpuComputeTracker(
+                        guard.OpenWindow,
+                        () =>
+                        {
+                            guard.ResetCount();
+                            Log.Debug("Первое распознавание на GPU прошло — счётчик сбоев обнулён");
+                        });
+                }
+            }
+
+            return recognizer;
+        }
+
+        /// <summary>
+        /// Принять настройки из окна. Поля, которые живут вне окна и могли измениться, пока оно было
+        /// открыто (позиция виджета, подсказка GPU), берутся из текущих, а не из снимка на момент открытия.
+        /// Чекбокс GPU сохраняется только изменением (см. GpuSettingsResolver). Вызывается ДО ApplySettings.
+        /// </summary>
+        private void AcceptSettings(SettingsWindow window)
+        {
+            var fromWindow = window.Settings;
+            fromWindow.WidgetPositionX = _settings.WidgetPositionX;
+            fromWindow.WidgetPositionY = _settings.WidgetPositionY;
+            fromWindow.GpuFailed = _settings.GpuFailed;
+
+            var (useGpu, clearGuard) = GpuSettingsResolver.Resolve(_settings.UseGpu, window.GpuCheckboxShown, window.GpuCheckboxNow);
+            fromWindow.UseGpu = useGpu;
+            if (clearGuard && _gpuGuard?.IsDisabled == true)
+            {
+                _gpuGuard.ResetCount();
+                Log.Information("Видеокарта включена пользователем после выключения защитой — счётчик сбоев обнулён");
+            }
+
+            _settings = fromWindow;
+        }
+
+        private static string UnwrapMessage(Exception ex) =>
+            ((ex as AggregateException)?.InnerException ?? ex).Message;
 
         /// <summary>
         /// Инициализировать речевой движок (Whisper или Mock)
         /// </summary>
         private void InitializeSpeechRecognizer()
         {
+            _engineDeviceStatus = "не определено";
+
             var model = ModelCatalog.GetById(_settings.WhisperModelSize);
             var modelPath = model != null
                 ? ModelCatalog.GetModelPath(model)
@@ -265,26 +416,37 @@ namespace LWhisper.UI.WPF
                         Log.Warning(ex, "Не удалось прочитать vocabulary.txt — продолжаем без prompt");
                     }
 
+                    // GPU выключен выбором пользователя или защитой от сбоев драйвера (решение защиты —
+                    // только локально на машине, в перемещаемый settings.json не пишется)
+                    var forceCpu = GpuPolicy.ResolveForceCpu(_settings.UseGpu, _gpuGuard?.IsDisabled == true);
+                    _effectiveForceCpu = forceCpu;
+
                     // C2 (CP6): распознаватель получает тот же бюджет параллелизма, что и streaming-путь.
                     // Дыра закрыта явно: общий _processor (цель fallback) при включённом streaming
                     // считает потоки по streaming-бюджету, а не по traditional.
-                    var effectiveParallelism = ComputeEffectiveParallelism(_settings);
-                    var whisperRecognizer = new LWhisper.SpeechEngine.WhisperSpeechRecognizer(modelPath, _settings.RecognitionLanguage, _settings.GpuFailed, _settings.Streaming, vocabularyPrompt, effectiveParallelism);
+                    // Бюджет считается по подсказке GpuFailed до инициализации; если этот запуск её
+                    // опроверг, менеджер сегментов получит уже исправленный параллелизм, а потоки
+                    // распознавателя (важны только в режиме divided) — со следующей инициализации.
+                    var effectiveParallelism = ComputeEffectiveParallelism(_settings, forceCpu);
 
-                    // ВАЖНО: Инициализировать асинхронно
-                    Task.Run(async () =>
+                    string? gpuInitError = null;
+                    LWhisper.SpeechEngine.WhisperSpeechRecognizer whisperRecognizer;
+                    try
                     {
-                        await whisperRecognizer.InitializeAsync();
-                        Log.Information("WhisperSpeechRecognizer инициализирован и готов к работе");
-                    }).Wait(); // Ждем завершения инициализации
-
-                    // PERF-03: Если GPU не загрузилась — сохранить флаг чтобы не пробовать на следующих запусках
-                    if (whisperRecognizer.GpuInitFailed && !_settings.GpuFailed)
-                    {
-                        _settings.GpuFailed = true;
-                        _settingsManager?.Save(_settings);
-                        Log.Information("Флаг GpuFailed сохранён в настройках — следующий запуск пропустит Vulkan");
+                        whisperRecognizer = CreateWhisperRecognizer(modelPath, vocabularyPrompt, effectiveParallelism, forceCpu);
                     }
+                    catch (Exception ex) when (!forceCpu)
+                    {
+                        // Инициализация на GPU бросила (например, модель не влезла в видеопамять) —
+                        // тот же движок на процессоре лучше заглушки
+                        gpuInitError = UnwrapMessage(ex);
+                        Log.Warning(ex, "Инициализация Whisper на GPU не удалась — повтор на процессоре");
+                        _effectiveForceCpu = true;
+                        whisperRecognizer = CreateWhisperRecognizer(modelPath, vocabularyPrompt,
+                            ComputeEffectiveParallelism(_settings, forceCpu: true), forceCpu: true);
+                    }
+
+                    UpdateGpuHint(whisperRecognizer.GpuDetection, gpuAttempted: !forceCpu, gpuInitError);
 
                     _speechRecognizer = whisperRecognizer;
                     Log.Information("Инициализирован WhisperSpeechRecognizer с моделью: {Model} ({Path})", _settings.WhisperModelSize, modelPath);
@@ -293,7 +455,10 @@ namespace LWhisper.UI.WPF
                 {
                     Log.Error(ex, "Ошибка инициализации Whisper, используется Mock");
                     _speechRecognizer = new MockSpeechRecognizer();
-                    MessageBox.Show($"Не удалось загрузить модель Whisper: {ex.Message}\n\nИспользуется тестовая заглушка. Скачайте модель через Настройки.",
+                    _engineDeviceStatus = "тестовая заглушка (модель не загрузилась)";
+                    // Файл модели на месте — совет «скачайте» здесь неверен
+                    MessageBox.Show($"Не удалось загрузить модель Whisper: {UnwrapMessage(ex)}\n\nИспользуется тестовая заглушка. " +
+                        "Проверьте файл модели или выберите другую модель в Настройках.",
                         "LWhisper", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
             }
@@ -301,6 +466,7 @@ namespace LWhisper.UI.WPF
             {
                 Log.Warning("Модель Whisper не найдена: {Path}. Используется Mock.", modelPath);
                 _speechRecognizer = new MockSpeechRecognizer();
+                _engineDeviceStatus = "тестовая заглушка (модель не найдена)";
 
                 // При первом запуске показать окно настроек с инструкцией
                 Dispatcher.BeginInvoke(new Action(() =>
@@ -355,7 +521,7 @@ namespace LWhisper.UI.WPF
                     // Создать менеджер распознавания сегментов
                     // C2 (CP6): формула живёт в ComputeEffectiveParallelism — тот же бюджет уже
                     // получил распознаватель в InitializeSpeechRecognizer(). Дублировать запрещено.
-                    int parallelism = ComputeEffectiveParallelism(_settings);
+                    int parallelism = ComputeEffectiveParallelism(_settings, _effectiveForceCpu);
                     _recognitionManager = new SegmentRecognitionManager(
                         _speechRecognizer,
                         parallelism,
@@ -477,15 +643,29 @@ namespace LWhisper.UI.WPF
 
         private void OnSettingsRequested()
         {
+            // Немодальное окно уже открыто — второе окно настроек поверх него потеряло бы одно из сохранений
+            if (_settingsWindow != null && _settingsWindow.IsVisible)
+            {
+                _settingsWindow.Activate();
+                return;
+            }
+
             try
             {
                 var devices = _audioRecorder?.GetAvailableDevices() ?? new List<string>();
-                var settingsWindow = new SettingsWindow(_settings, devices, _updateService, _availableUpdate);
+                var settingsWindow = new SettingsWindow(_settings, devices, _updateService, _availableUpdate, _engineDeviceStatus, _gpuGuard?.IsDisabled == true);
                 settingsWindow.UpdateFound += update => _availableUpdate = update;
 
-                if (settingsWindow.ShowDialog() == true)
+                // Модальное окно тоже регистрируется: немодальный путь (из PreviewWindow) видит его и не
+                // откроет второе окно настроек поверх
+                _settingsWindow = settingsWindow;
+                bool? accepted;
+                try { accepted = settingsWindow.ShowDialog(); }
+                finally { _settingsWindow = null; }
+
+                if (accepted == true)
                 {
-                    _settings = settingsWindow.Settings;
+                    AcceptSettings(settingsWindow);
                     ApplySettings();
                     _settingsManager?.Save(_settings);
                     Log.Information("Настройки сохранены");
@@ -513,7 +693,7 @@ namespace LWhisper.UI.WPF
             try
             {
                 var devices = _audioRecorder?.GetAvailableDevices() ?? new List<string>();
-                _settingsWindow = new SettingsWindow(_settings, devices, _updateService, _availableUpdate);
+                _settingsWindow = new SettingsWindow(_settings, devices, _updateService, _availableUpdate, _engineDeviceStatus, _gpuGuard?.IsDisabled == true);
                 _settingsWindow.UpdateFound += update => _availableUpdate = update;
 
                 _settingsWindow.Closed += (s, e) =>
@@ -521,7 +701,7 @@ namespace LWhisper.UI.WPF
                     // Проверить SettingsAccepted — DialogResult недоступен для немодальных окон (Show())
                     if (_settingsWindow.SettingsAccepted)
                     {
-                        _settings = _settingsWindow.Settings;
+                        AcceptSettings(_settingsWindow);
                         ApplySettings();
                         _settingsManager?.Save(_settings);
                         Log.Information("Настройки сохранены (из PreviewWindow)");

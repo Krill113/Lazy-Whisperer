@@ -16,8 +16,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Стенд CPU-only, как прод у владельца: Whisper.net.Runtime.Vulkan НЕ подключается,
-         распознаватель создаётся с gpuFailed:true. System.Text.Json не нужен — shared framework net8.0.
+    <!-- Стенд CPU-only намеренно: Whisper.net.Runtime.Vulkan НЕ подключается, распознаватель
+         создаётся с forceCpu:true. Прод с 2026-09-29 работает на GPU, если он есть, — числа стенда
+         описывают CPU-путь и на GPU-машины напрямую не переносятся. System.Text.Json не нужен — shared framework net8.0.
          Версии совпадают с LWhisper.UI.WPF, чтобы не плодить вторую ветку NuGet-кэша в CI. -->
     <!-- CP3: MCP-режим. ModelContextProtocol тянет только Hosting.Abstractions,
          а Host.CreateEmptyApplicationBuilder живёт в Microsoft.Extensions.Hosting -->

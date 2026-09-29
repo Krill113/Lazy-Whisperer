@@ -47,6 +47,13 @@ namespace LWhisper.UI.WPF.Services
         /// Файл настроек
         /// </summary>
         public static string SettingsFile => Path.Combine(AppDataFolder, "settings.json");
+
+        /// <summary>
+        /// Папка защиты от сбоев драйвера GPU (см. GpuSafetyGuard). LocalAppData, а не перемещаемый
+        /// профиль: сбой драйвера — свойство конкретной машины
+        /// </summary>
+        public static string GpuSafetyFolder => Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LWhisper");
         
         /// <summary>
         /// Корневая папка данных приложения
