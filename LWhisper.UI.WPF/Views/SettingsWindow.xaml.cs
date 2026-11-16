@@ -279,7 +279,7 @@ namespace LWhisper.UI.WPF.Views
 
             // Загрузить настройки потокового режима
             StreamingEnabledCheckBox.IsChecked = Settings.Streaming?.Enabled ?? true;
-            PauseThresholdTextBox.Text = Settings.Streaming?.PauseThresholdMs.ToString() ?? "1000";
+            PauseThresholdTextBox.Text = (Settings.Streaming?.PauseThresholdMs ?? new StreamingSettings().PauseThresholdMs).ToString();
             AutoStopCheckBox.IsChecked = Settings.Streaming?.AutoStopOnLongPause ?? false;
             AutoStopPauseTextBox.Text = Settings.Streaming?.AutoStopPauseDurationMs.ToString() ?? "3000";
 

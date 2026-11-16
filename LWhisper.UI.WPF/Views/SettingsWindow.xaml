@@ -128,7 +128,7 @@
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
                         <TextBlock Text="Длительность паузы для сегментации:" 
                                    VerticalAlignment="Center" Width="250"/>
-                        <TextBox x:Name="PauseThresholdTextBox" Width="60" Text="1000" VerticalAlignment="Center"/>
+                        <TextBox x:Name="PauseThresholdTextBox" Width="60" VerticalAlignment="Center"/>
                         <TextBlock Text="мс" VerticalAlignment="Center" Margin="5,0,0,0"/>
                     </StackPanel>
                     

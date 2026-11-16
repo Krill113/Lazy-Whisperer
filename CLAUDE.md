@@ -142,9 +142,9 @@ Desktop Windows-приложение для офлайн голосового в
 - `GpuFailed` — hint only: last detected backend was CPU. Drives parallelism clipping before engine init; never blocks GPU probing. Detection is `GpuBackendDetector` over the native whisper.cpp log (`whisper_model_load: <backend> total size`), NOT `GetRuntimeInfo()` — that string lists CPU features only and never mentions Vulkan
 - `Streaming` — StreamingSettings object with VAD threshold parameters
 - `Enabled` — Default false
-- `PauseThresholdMs` — Default 1500ms (segment boundary detection)
-- `MinSegmentDurationMs` — Default 1500ms (minimum segment length)
-- `MaxSegmentDurationMs` — Default 15000ms (max segment length)
+- `PauseThresholdMs` — Default 800ms (segment boundary detection; saved user values are preserved on upgrade)
+- `MinSegmentDurationMs` — Default 2000ms (minimum segment length before trailing silence is trimmed; final segment has a separate 250ms technical minimum)
+- `MaxSegmentDurationMs` — Default 25000ms (max segment length; saved user values are preserved on upgrade)
 - `AutoStopOnLongPause` — Default false
 - `AutoStopPauseDurationMs` — Default 3000ms
 - `MaxParallelRecognitions` — Default 3 (concurrent Whisper recognition tasks; clipped to 2 when the engine runs on CPU: `GpuFailed` hint from the previous run, or GPU disabled now)

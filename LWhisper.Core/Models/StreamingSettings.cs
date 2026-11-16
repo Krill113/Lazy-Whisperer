@@ -13,9 +13,9 @@ namespace LWhisper.Core.Models
 
         /// <summary>
         /// Длительность паузы для завершения сегмента (миллисекунды)
-        /// Рекомендуется: 1500мс для естественных пауз
+        /// По умолчанию 800мс: короткая пауза завершает фразу без лишнего ожидания.
         /// </summary>
-        public int PauseThresholdMs { get; set; } = 1500;
+        public int PauseThresholdMs { get; set; } = 800;
 
         /// <summary>
         /// Минимальная длительность сегмента для отправки на распознавание (миллисекунды)
@@ -27,7 +27,7 @@ namespace LWhisper.Core.Models
         /// Максимальная длительность сегмента (миллисекунды)
         /// При достижении будет принудительное завершение сегмента
         /// </summary>
-        public int MaxSegmentDurationMs { get; set; } = 15000;
+        public int MaxSegmentDurationMs { get; set; } = 25000;
 
         /// <summary>
         /// Автоматически останавливать запись при длинной паузе

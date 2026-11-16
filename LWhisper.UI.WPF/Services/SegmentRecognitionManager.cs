@@ -155,7 +155,6 @@ namespace LWhisper.UI.WPF.Services
 
                         cleanedText = CollapsePhraseRepeats(cleanedText);
                         cleanedText = CollapseRepeatedWords(cleanedText);
-                        cleanedText = RemoveIntraSegmentDuplicates(cleanedText);
 
                         if (!string.IsNullOrWhiteSpace(cleanedText))
                         {
@@ -170,7 +169,7 @@ namespace LWhisper.UI.WPF.Services
                             }
 
                             // D6: compression-ratio detector — safety net ПОСЛЕ dedup'ов.
-                            // Простые повторы должны быть схлопнуты выше (CollapsePhraseRepeats/RemoveIntraSegmentDuplicates).
+                            // Подряд идущие повторы уже обработаны CollapsePhraseRepeats/CollapseRepeatedWords.
                             // Если ratio всё ещё высокий — это дикая галлюцинация, которую не вытащили regex'ы → дроп.
                             var compressionRatio = GetCompressionRatio(cleanedText);
                             if (compressionRatio >= _compressionRatioThreshold)
@@ -454,19 +453,15 @@ namespace LWhisper.UI.WPF.Services
             return false;
         }
 
-        // Phrase-level залипание: повтор многословной фразы 2+ раз подряд.
-        // RemoveIntraSegmentDuplicates ловит это только если копии симметрично заканчиваются знаком препинания —
-        // когда копий 3+ и внутри них есть запятая, последняя копия (без trailing запятой) не нормализуется
-        // одинаково с предыдущими и HashSet оставляет дубль.
-        // 2-словные фразы покрыты — защита от валидных коротких повторов («да да») обеспечивается MinPhraseRepeatChars=10.
-        // С порогом 3 была дыра: «сейчас тоже сейчас тоже» не схлопывалось (Whisper-залип на 2-словной фразе).
+        // Схлопываем только соседние копии: повтор после другой фразы может быть намеренным.
+        // Минимум 10 символов защищает короткие повторы вроде «да да».
         private const int MinPhraseRepeatWords = 2;
         private const int MinPhraseRepeatChars = 10;
 
         /// <summary>
-        /// Схлопнуть повторяющиеся подряд фразы из 3+ слов (Whisper «залипает» на длинной фразе).
+        /// Схлопнуть повторяющиеся подряд фразы из 2+ слов (Whisper «залипает» на длинной фразе).
         /// Token-based алгоритм с перебором окна от большего к меньшему — не regex, чтобы избежать
-        /// catastrophic backtracking. Работает первым слоем, до word-collapse и phrase-dedup.
+        /// catastrophic backtracking. Работает до схлопывания отдельных слов.
         /// </summary>
         private string CollapsePhraseRepeats(string text)
         {
@@ -513,7 +508,6 @@ namespace LWhisper.UI.WPF.Services
 
         // Word-level залипание: 2+ одинаковых слова подряд через пробелы.
         // Whisper нередко удваивает значимое слово («запомнить запомнить», «теперь теперь»).
-        // RemoveIntraSegmentDuplicates это не ловит — он работает только если между повторами есть знак препинания.
         private static readonly System.Text.RegularExpressions.Regex RepeatedWordsRegex =
             new System.Text.RegularExpressions.Regex(
                 // [\s,;:] — повторы ловятся и через пробел, и через запятую/точку-с-запятой/двоеточие
@@ -554,45 +548,6 @@ namespace LWhisper.UI.WPF.Services
         /// <summary>
         /// Удалить повторяющиеся предложения внутри одного сегмента (Whisper галлюцинирует повторы)
         /// </summary>
-        private string RemoveIntraSegmentDuplicates(string text)
-        {
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                return text;
-            }
-
-            // Разбить на фразы (по знакам препинания, включая запятые — Whisper часто дублирует через запятую)
-            var parts = System.Text.RegularExpressions.Regex.Split(text, @"(?<=[.!?,;])\s+");
-
-            if (parts.Length < 2)
-            {
-                return text;
-            }
-
-            var seen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var result = new System.Collections.Generic.List<string>();
-
-            foreach (var part in parts)
-            {
-                if (string.IsNullOrWhiteSpace(part)) continue;
-
-                // Нормализовать для сравнения: trim, lower, убрать крайние знаки препинания
-                var normalized = part.Trim().ToLowerInvariant().Trim('.', '!', '?', ',', ' ');
-
-                if (seen.Contains(normalized))
-                {
-                    Log.Debug("Обнаружен внутрисегментный повтор, удалено: \"{Removed}\"", part);
-                }
-                else
-                {
-                    seen.Add(normalized);
-                    result.Add(part);
-                }
-            }
-
-            return string.Join(" ", result);
-        }
-
         /// <summary>
         /// Получить текст всех предыдущих сегментов
         /// </summary>

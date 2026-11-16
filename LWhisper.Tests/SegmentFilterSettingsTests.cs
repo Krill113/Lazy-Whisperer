@@ -81,6 +81,59 @@ namespace LWhisper.Tests
             Assert.Equal(0, manager.SkippedSilentCount);
         }
 
+        /// <summary>Отрицание в самокоррекции нельзя удалять как повтор предыдущего «нет».</summary>
+        [Fact]
+        public async Task RepeatedNegationAndCorrection_ArePreserved()
+        {
+            const string text = "Нет, нет, этот вариант оставь. Проверь сначала первый участок, потом второй, потом снова первый. Диаметр 110, нет, 160 мм.";
+            using var manager = new SegmentRecognitionManager(new StubRecognizer(text), 1);
+
+            await manager.ProcessSegmentAsync(MakeAudio(0.20));
+            await manager.WaitAllAsync();
+
+            Assert.Equal(text, manager.GetFullText());
+        }
+
+        /// <summary>Повторная инструкция после другой инструкции остаётся частью диктовки.</summary>
+        [Fact]
+        public async Task SeparatedRepeatedInstruction_IsPreserved()
+        {
+            const string text = "Проверь трубу. Проверь колодец. Проверь трубу.";
+            using var manager = new SegmentRecognitionManager(new StubRecognizer(text), 1);
+
+            await manager.ProcessSegmentAsync(MakeAudio(0.20));
+            await manager.WaitAllAsync();
+
+            Assert.Equal(text, manager.GetFullText());
+        }
+
+        /// <summary>Два коротких отрицания могут быть намеренным усилением.</summary>
+        [Fact]
+        public async Task TwoShortNegations_ArePreserved()
+        {
+            const string text = "Нет, нет";
+            using var manager = new SegmentRecognitionManager(new StubRecognizer(text), 1);
+
+            await manager.ProcessSegmentAsync(MakeAudio(0.20));
+            await manager.WaitAllAsync();
+
+            Assert.Equal(text, manager.GetFullText());
+        }
+
+        /// <summary>Сохраняем защиту от подряд повторённых длинных фраз и числовых предложений.</summary>
+        [Theory]
+        [InlineData("Русский с техническими терминами, русский с техническими терминами, русский с техническими терминами, русский с техническими терминами, русский с техническими терминами,", "Русский с техническими терминами,")]
+        [InlineData("Уклон 0,005. Уклон 0,005.", "Уклон 0,005.")]
+        public async Task AdjacentPhraseLoop_IsCollapsed(string text, string expected)
+        {
+            using var manager = new SegmentRecognitionManager(new StubRecognizer(text), 1);
+
+            await manager.ProcessSegmentAsync(MakeAudio(0.20));
+            await manager.WaitAllAsync();
+
+            Assert.Equal(expected, manager.GetFullText());
+        }
+
         [Fact]
         public async Task CompressionRatioThreshold_FromSettings_IsActuallyApplied()
         {
