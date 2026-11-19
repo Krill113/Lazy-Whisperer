@@ -10,6 +10,12 @@ namespace LWhisper.Core.Models
         /// </summary>
         public RecordingMode RecordingMode { get; set; } = RecordingMode.Toggle;
 
+        /// <summary>Локальный архив диктовок в dev-сборке; null сохраняет режим запуска из окружения.</summary>
+        public bool? SaveLocalDictations { get; set; }
+
+        /// <summary>Папка локального архива; null означает стандартную папку.</summary>
+        public string? LocalDictationsDirectory { get; set; }
+
         /// <summary>
         /// Горячая клавиша (например, "Ctrl+Shift+Space")
         /// </summary>

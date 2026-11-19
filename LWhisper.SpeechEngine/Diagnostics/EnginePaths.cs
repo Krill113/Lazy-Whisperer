@@ -25,6 +25,21 @@ namespace LWhisper.SpeechEngine.Diagnostics
         /// <summary>Корень дампов отладки: LWHISPER_DEBUG_AUDIO_DIR ?? AppDataRoot/debug.</summary>
         public static string DebugRoot { get; }
 
+        /// <summary>Обычная папка архива без переопределения из окружения.</summary>
+        public static string DefaultDebugRoot => Path.Combine(AppDataRoot, "debug");
+
+        /// <summary>Путь из настроек должен быть абсолютным и не указывать на UNC/устройство.</summary>
+        public static bool IsLocalDictationsDirectory(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path)) return false;
+            var normalized = path.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+            if (normalized.StartsWith(new string(Path.DirectorySeparatorChar, 2), StringComparison.Ordinal)) return false;
+            var suffix = normalized.Substring(Path.GetPathRoot(normalized)!.Length);
+            foreach (var part in suffix.Split(Path.DirectorySeparatorChar))
+                if (part.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return false;
+            return !File.Exists(path);
+        }
+
         static EnginePaths()
         {
             var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);

@@ -2,6 +2,7 @@ using System.Windows;
 using System.IO;
 using System.Net.Http;
 using LWhisper.Core.Models;
+using LWhisper.SpeechEngine.Diagnostics;
 using LWhisper.UI.WPF.Services;
 using NAudio.Wave;
 
@@ -21,6 +22,8 @@ namespace LWhisper.UI.WPF.Views
         private static readonly string[] _aggressivenessLabels = { "Мягкий", "Норма", "Строгий", "Максимум" };
         private readonly UpdateService _updateService;
         private UpdateInfo? _availableUpdate;
+        private bool _localDictationsShown;
+        private string _localDictationsDirectoryShown = "";
 
         /// <summary>Найдено обновление (ручной проверкой) — App синхронизирует своё состояние</summary>
         public event Action<UpdateInfo>? UpdateFound;
@@ -276,6 +279,16 @@ namespace LWhisper.UI.WPF.Views
             AutoInsertDelayTextBox.Text = Settings.AutoInsertDelaySeconds.ToString();
             AutoInsertEnabledCheckBox.IsChecked = Settings.AutoInsertEnabled;
             AutoUpdateCheckBox.IsChecked = Settings.AutoUpdateCheckEnabled;
+
+            if (UpdateService.IsDevBuild)
+            {
+                LocalDictationsPanel.Visibility = Visibility.Visible;
+                _localDictationsShown = Settings.SaveLocalDictations ?? AudioDumpSink.Enabled;
+                _localDictationsDirectoryShown = Settings.LocalDictationsDirectory
+                    ?? (Settings.SaveLocalDictations.HasValue ? EnginePaths.DefaultDebugRoot : AudioDumpSink.RootDirectory ?? EnginePaths.DebugRoot);
+                SaveLocalDictationsCheckBox.IsChecked = _localDictationsShown;
+                LocalDictationsDirectoryTextBox.Text = _localDictationsDirectoryShown;
+            }
 
             // Загрузить настройки потокового режима
             StreamingEnabledCheckBox.IsChecked = Settings.Streaming?.Enabled ?? true;
@@ -585,6 +598,25 @@ namespace LWhisper.UI.WPF.Views
 
         private void SaveButton_Click(object sender, RoutedEventArgs e)
         {
+            var directory = LocalDictationsDirectoryTextBox.Text.Trim();
+            bool directoryChanged = UpdateService.IsDevBuild && LocalDictationsDirectoryTextBox.Text != _localDictationsDirectoryShown;
+            if (directoryChanged && directory.Length > 0 && !EnginePaths.IsLocalDictationsDirectory(directory))
+            {
+                MessageBox.Show("Укажите абсолютный путь к локальной папке без недопустимых символов.",
+                    "LWhisper", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (UpdateService.IsDevBuild)
+            {
+                bool enabled = SaveLocalDictationsCheckBox.IsChecked == true;
+                if (enabled != _localDictationsShown || directoryChanged)
+                {
+                    Settings.SaveLocalDictations = enabled;
+                    Settings.LocalDictationsDirectory = directory.Length == 0 || directory == EnginePaths.DefaultDebugRoot ? null : directory;
+                }
+            }
+
             if (ToggleModeRadio.IsChecked == true)
                 Settings.RecordingMode = RecordingMode.Toggle;
             else if (PushToTalkRadio.IsChecked == true)

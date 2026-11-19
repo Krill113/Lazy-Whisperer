@@ -10,7 +10,7 @@ namespace LWhisper.SpeechEngine.Diagnostics
 {
     /// <summary>
     /// Статический фасад дампа отладочного аудио (P4 спеки).
-    /// Полностью no-op, пока не выставлена переменная окружения LWHISPER_DEBUG_AUDIO.
+    /// Без явного включения из dev-настроек или окружения файлы не пишутся.
     /// Потокобезопасен: сегменты пишутся из параллельных задач распознавания,
     /// буфер сессии — из потока NAudio.
     ///
@@ -31,7 +31,20 @@ namespace LWhisper.SpeechEngine.Diagnostics
         private const int AssumedBytesPerSecond = 32000;
         private const long MaxSessionBytes = (long)MaxSessionSeconds * AssumedBytesPerSecond;
 
-        private static readonly bool EnabledFlag = ParseFlag(Environment.GetEnvironmentVariable(FlagEnvName));
+        private static readonly bool EnvironmentEnabled = ParseFlag(Environment.GetEnvironmentVariable(FlagEnvName));
+        private static volatile bool EnabledFlag = EnvironmentEnabled;
+
+        /// <summary>Фактический корень текущей записи, без создания каталога.</summary>
+        public static string RootDirectory { get; private set; } = EnginePaths.DebugRoot;
+
+        /// <summary>Вызывается до старта рекордера, после завершения предыдущего распознавания.</summary>
+        public static void BeginDictation(bool devBuild, bool? saveLocally, string? directory)
+        {
+            bool explicitChoice = devBuild && saveLocally.HasValue;
+            RootDirectory = explicitChoice ? directory ?? EnginePaths.DefaultDebugRoot : EnginePaths.DebugRoot;
+            EnabledFlag = explicitChoice ? saveLocally == true && EnginePaths.IsLocalDictationsDirectory(RootDirectory) : EnvironmentEnabled;
+            ResetSession();
+        }
 
         private static readonly object SessionLock = new object();
         private static readonly object MetaLock = new object();
@@ -47,7 +60,7 @@ namespace LWhisper.SpeechEngine.Diagnostics
         private static string? _sessionDirectory;
         private static MemoryStream? _sessionPcm;
         private static bool _sessionLimitLogged;
-        private static bool _overrideLogged;
+        private static string? _loggedRoot;
         private static bool _writeErrorLogged;
 
         // База внутреннего счётчика заведомо выше любого реального id сегмента за сессию
@@ -55,7 +68,7 @@ namespace LWhisper.SpeechEngine.Diagnostics
         // не столкнулись при смешанном использовании.
         private static int _internalSegmentCounter = 5000;
 
-        /// <summary>Включён ли дамп. Читается один раз при загрузке типа.</summary>
+        /// <summary>Включён ли дамп. Режим фиксируется на время диктовки.</summary>
         public static bool Enabled => EnabledFlag;
 
         /// <summary>
@@ -79,14 +92,13 @@ namespace LWhisper.SpeechEngine.Diagnostics
         /// <summary>Закрыть текущую сессию: следующая запись начнёт новую папку.</summary>
         public static void ResetSession()
         {
-            if (!EnabledFlag) return;
-
             lock (SessionLock)
             {
                 _sessionDirectory = null;
                 _sessionPcm?.Dispose();
                 _sessionPcm = null;
                 _sessionLimitLogged = false;
+                _writeErrorLogged = false;
             }
         }
 
@@ -234,7 +246,8 @@ namespace LWhisper.SpeechEngine.Diagnostics
             // конкурирует AppendSessionPcm (каждые 30 мс, StreamingAudioRecorder.OnDataAvailable);
             // держать его на время файлового I/O (особенно под антивирусом на %APPDATA%) означало бы
             // рисковать потерянным фреймом микрофона в момент создания ПЕРВОЙ папки сессии.
-            var dir = Path.Combine(EnginePaths.DebugRoot, DateTime.Now.ToString("yyyyMMdd-HHmmss"));
+            var dir = Path.Combine(RootDirectory, DateTime.Now.ToString("yyyyMMdd-HHmmss"));
+            if (Directory.Exists(dir)) dir += "-" + Guid.NewGuid().ToString("N");
             Directory.CreateDirectory(dir);
 
             lock (SessionLock)
@@ -244,12 +257,11 @@ namespace LWhisper.SpeechEngine.Diagnostics
                 // просто останется пустым и будет проигнорирован).
                 _sessionDirectory ??= dir;
 
-                if (!_overrideLogged)
+                if (_loggedRoot != RootDirectory)
                 {
-                    _overrideLogged = true;
+                    _loggedRoot = RootDirectory;
                     // §4 скелета: применённое переопределение логируется один раз со словом override.
-                    Log.Information("AudioDumpSink override: {Env} включён — дамп аудио пишется в {Dir}",
-                        FlagEnvName, EnginePaths.DebugRoot);
+                    Log.Information("AudioDumpSink override: дамп аудио пишется в {Dir}", RootDirectory);
                 }
 
                 return _sessionDirectory;

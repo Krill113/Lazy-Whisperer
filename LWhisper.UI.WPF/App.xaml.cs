@@ -5,6 +5,7 @@ using LWhisper.UI.WPF.Views;
 using LWhisper.UI.WPF.Services;
 using LWhisper.Core.Interfaces;
 using LWhisper.Core.Models;
+using LWhisper.SpeechEngine.Diagnostics;
 using Serilog;
 
 namespace LWhisper.UI.WPF
@@ -864,6 +865,8 @@ namespace LWhisper.UI.WPF
                     winInjector.RememberActiveWindow();
                 }
 
+                AudioDumpSink.BeginDictation(UpdateService.IsDevBuild,
+                    _settings.SaveLocalDictations, _settings.LocalDictationsDirectory);
                 _isRecording = true;
                 _widget?.SetState(WidgetState.Initializing);
                 _trayManager?.SetIcon(TrayIconState.Recording);
@@ -1001,6 +1004,14 @@ namespace LWhisper.UI.WPF
                     Log.Debug("Запись остановлена, длительность: {Duration}", audioData.Duration);
 
                     var result = await _speechRecognizer!.RecognizeAsync(audioData);
+                    if (AudioDumpSink.Enabled)
+                    {
+                        AudioDumpSink.DumpSegment(audioData, new SegmentDumpMeta
+                        {
+                            SegmentId = 1, Kind = "traditional", DurationMs = audioData.Duration.TotalMilliseconds,
+                            RawText = result.Text ?? string.Empty, Error = result.ErrorMessage
+                        });
+                    }
                     Log.Information("Распознавание завершено: {Success}, Текст: {Text}", result.Success, result.Text);
 
                     if (result.Success && !string.IsNullOrEmpty(result.Text))
