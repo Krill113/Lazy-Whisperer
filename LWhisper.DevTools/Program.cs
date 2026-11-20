@@ -20,11 +20,28 @@ public static class Program
 
     public static async Task<int> Main(string[] args)
     {
+        if (args is ["shadow-repeat", ..]) return ShadowRepeat.Run(args);
+        if (args is ["shadow-check-output", var destination])
+            return ValidateShadowOutput(destination);
+        if (args is ["shadow-prompt-hash", var promptFile])
+        {
+            try
+            {
+                var hash = EngineInfo.HashPrompt(CliOptions.ReadPromptFile(promptFile));
+                if (hash is null) return ExitBadArguments;
+                Console.WriteLine(hash);
+                return ExitOk;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or CliParseException or ArgumentException)
+            { return ExitBadArguments; }
+        }
+        bool privateDecode = args is ["shadow-decode", ..];
+        if (privateDecode) args[0] = "transcribe";
         DisableInheritedAudioDump();
 
         // CP3: MCP-режим поднимается ДО любой настройки логирования CLI —
         // console-sink Serilog в этом режиме подключать нельзя (stdout занят JSON-RPC).
-        if (LWhisper.DevTools.Mcp.McpMode.IsRequested(args))
+        if (!privateDecode && LWhisper.DevTools.Mcp.McpMode.IsRequested(args))
         {
             return await LWhisper.DevTools.Mcp.McpMode.RunAsync(args);
         }
@@ -54,11 +71,46 @@ public static class Program
             return ExitBadArguments;
         }
 
+        if (privateDecode)
+            return await RunShadowDecodeAsync(options);
         var modelPath = ModelResolver.Resolve(options.Model);
 
         return options.Command == "engine-info"
             ? RunEngineInfo(options, modelPath)
             : await RunMeasurementAsync(options, modelPath);
+    }
+
+    private static async Task<int> RunShadowDecodeAsync(CliOptions options)
+    {
+        string outDir;
+        FileStream reservation;
+        try
+        {
+            outDir = ShadowRepeat.PrivateOutput(options.OutDir ?? throw new InvalidDataException());
+            Directory.CreateDirectory(outDir);
+            // Directory creation is idempotent: only CreateNew grants ownership to one caller.
+            reservation = new FileStream(Path.Combine(outDir, ".shadow-reservation"),
+                FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            Console.Error.WriteLine("Shadow decode requires a fresh, unclaimed private destination.");
+            return ExitBadArguments;
+        }
+
+        // Hold through sink disposal; retain the marker even after failure or completion.
+        using (reservation)
+            return await RunMeasurementAsync(options, ModelResolver.Resolve(options.Model), outDir);
+    }
+
+    private static int ValidateShadowOutput(string path)
+    {
+        try { ShadowRepeat.PrivateOutput(path); return ExitOk; }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            Console.Error.WriteLine("Shadow destination must be fresh, local, and within the private bench, outside Git and Brain.");
+            return ExitBadArguments;
+        }
     }
 
     /// <summary>
@@ -90,10 +142,10 @@ public static class Program
         return ExitOk;
     }
 
-    private static async Task<int> RunMeasurementAsync(CliOptions options, string modelPath)
+    private static async Task<int> RunMeasurementAsync(CliOptions options, string modelPath, string? reservedOutDir = null)
     {
-        var outDir = ResolveOutDir(options);
-        Directory.CreateDirectory(outDir);
+        var outDir = reservedOutDir ?? ResolveOutDir(options);
+        if (reservedOutDir is null) Directory.CreateDirectory(outDir);
 
         var fallbackWatch = new FallbackWatchSink();
         Log.Logger = new LoggerConfiguration()

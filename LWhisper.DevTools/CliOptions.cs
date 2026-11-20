@@ -204,7 +204,7 @@ public sealed record CliOptions
     /// Именно дословно: формат подсказки — предмет измерения, поэтому стенд не имеет права
     /// её переупаковывать. Реплику боевой подсказки готовит вызывающий.
     /// </summary>
-    private static string ReadPromptFile(string path)
+    internal static string ReadPromptFile(string path)
     {
         if (!File.Exists(path))
             throw new CliParseException($"Опция --prompt-file: файл не найден: '{path}'.");

@@ -188,3 +188,92 @@ claude mcp add lwhisper-transcribe --scope user -- "<АБСОЛЮТНЫЙ пут
   в `.gitignore` — в публичный репозиторий речь и тексты не утекают.
 - Обе папки чистятся **вручную**, автоудаления нет.
 - DevTools открывает `%APPDATA%\LWhisper\settings.json` **только на чтение** и никогда не пишет в него.
+
+## Теневая проверка повторов (офлайн, только DevTools)
+
+`dotnet <LWhisper.DevTools.dll> shadow-repeat <absolute-manifest.json> <absolute-new-result.json>`
+сравнивает обычный и нейтральный beam на тех же сегментах. Использует исходник боевого
+постфильтра, не взаимодействует с приложением и не вставляет текст. Каталог манифеста
+содержит входные WAV; результат должен находиться вне него, новым файлом в существующем
+подкаталоге `%LOCALAPPDATA%/LWhisper/bench` (папка LocalApplicationData на других ОС).
+Git-деревья, Brain/Obsidian-хранилища и пути через ссылки запрещены. Используйте локальную
+несинхронизируемую папку с доступом только для себя.
+В JSON результата есть тексты, SHA-256, порядок, причины, подтверждённое покрытие и сборки
+в порядке ID; stdout не предназначен для выдачи текста. Не переносите JSON/WAV в git.
+
+**Проверка переносимости без моделей** (Python 3.11+, .NET 8, `$private` — существующий
+локальный приватный подкаталог bench; `fixture-01` не должен существовать):
+
+```powershell
+dotnet build LWhisper.DevTools/LWhisper.DevTools.csproj -c Release
+$dll = (Resolve-Path 'LWhisper.DevTools/bin/Release/net8.0/LWhisper.DevTools.dll').Path
+python -I -X utf8 LWhisper.DevTools/tools/check-shadow.py $dll (Join-Path $private 'fixture-01')
+```
+
+Фикстура создаёт PCM и precomputed JSON с нуля; проверяет одну выбранную замену, влияние
+на префикс следующего по завершению сегмента, точный порядок ID, отклонённые варианты
+и неизменность входов. Это не измерение качества ASR.
+
+**Свои локальные захваты.** Возьмите неизменяемую после копирования завершённую dev-запись
+(`session.wav`, `seg-*.wav`, `meta.jsonl`) и сделайте отдельную рабочую копию в `$capture` внутри того же приватного bench.
+Для простого подтверждающего прогона используйте запись с одним сегментом, сделанную на CPU
+с beam и известной непустой эффективной подсказкой. При нескольких сегментах импорт покажет
+диагностику `unknown-history`, если история не сертифицирована отдельным сравнением.
+Из конфигурации **того прогона**, не из текущих настроек, возьмите модель, язык, tuning и
+порог сжатия. `$effectivePrompt` — UTF-8 файл с уже объединённой эффективной подсказкой,
+не сырой `vocabulary.txt` (см. обработку в WPF). Укажите абсолютные пути к уже установленной
+модели Whisper, модулю `transcribe-cpp` (`dist/index.js`), совместимой локальной модели
+Parakeet GGUF и `$capture`. Результаты обеих команд направляйте в приватные новые каталоги.
+
+```powershell
+# Пример для одного сегмента / CPU. Все переменные конфигурации относятся к захвату.
+$wav = (Resolve-Path (Join-Path $capture 'seg-0001.wav')).Path
+$flags = @('--input', $wav, '--model', $whisperModel, '--language', $language, '--beam',
+           '--ctx-floor', $ctxFloor, '--thread-mode', $threadMode, '--parallel', $parallelism,
+           '--format', 'json', '--quiet', '--repeat', '1')
+# Если при захвате был реальный фиксированный override потоков, добавьте '--threads', $threads.
+$a = Join-Path $private 'whisper-prompted-01'
+$b = Join-Path $private 'whisper-neutral-01'
+$w = Join-Path $private 'parakeet-01.jsonl'
+$prov = Join-Path $private 'provenance-01.json'
+if ((@($a, $b, $w, $prov) | Where-Object { Test-Path -LiteralPath $_ }).Count -ne 0) { throw 'Choose fresh paths' }
+dotnet $dll shadow-decode @flags --prompt-file $effectivePrompt --out $a
+if ($LASTEXITCODE) { throw 'Prompted run failed' }
+dotnet $dll shadow-decode @flags --out $b
+if ($LASTEXITCODE) { throw 'Neutral run failed' }
+node LWhisper.DevTools/tools/parakeet-witness.mjs $dll $localTranscribeModule $parakeetModel $w $wav
+if ($LASTEXITCODE) { throw 'Witness run failed' }
+dotnet $dll shadow-check-output $prov
+if ($LASTEXITCODE) { throw 'Unsafe provenance path' }
+$effectiveHash = dotnet $dll shadow-prompt-hash $effectivePrompt
+if ($LASTEXITCODE) { throw 'Effective prompt required' }
+# $engineIdentity и $runtimeIdentity — известные идентификаторы сборки и среды захвата и плеч.
+@{ engine = $engineIdentity; runtime = $runtimeIdentity; language = $language;
+   captureBackend = 'cpu'; parallelism = $parallelism; compressionThreshold = $compressionThreshold;
+   modelSha256 = (Get-FileHash $whisperModel).Hash.ToLowerInvariant();
+   promptSha256 = $effectiveHash;
+   effectivePromptFile = $effectivePrompt } | ConvertTo-Json | Set-Content -Encoding utf8 $prov
+python -I -X utf8 LWhisper.DevTools/tools/import-shadow.py $dll $capture (Join-Path $a 'report.json') (Join-Path $b 'report.json') $w $prov
+if ($LASTEXITCODE) { throw 'Capture import failed' }
+dotnet $dll shadow-repeat (Join-Path $capture 'shadow-manifest.json') (Join-Path $private 'shadow-01.json')
+```
+
+Для Vulkan штатный `transcribe` **не равноценен**; используйте предварительно записанные
+локальные плечи одного движка/модели/фактического бэкенда и политики beam. Манифест версии 1
+показан в сгенерированной фикстуре: `sessions` с `history`, `compressionThreshold`, `segments`;
+каждый сегмент содержит `id`, `order`, путь относительно корня и `wavSha256`, `archivedRaw`,
+`archivedPost`, `prompted`, `neutral` и `witness`. Режим `validated-replay` выбирает известный ноябрьский фильтр: программа заново вычисляет
+старые postfilter в наблюдаемом порядке и сравнивает их посимвольно с архивом. Повреждённый WAV
+или расхождение блокируют этот сегмент и остаток истории; новый фильтр оценивается отдельно.
+Импорт одной записи использует `single-segment` и текущую проверку сохранённого postfilter.
+Отсутствующее или неподтверждённое плечо/свидетель можно передать как `null`: это не голос за
+замену. Файлы с декодами привязаны к WAV по хешу, но идентичность раннера и контекста должна
+подтверждаться локальными данными оператора. Новые естественные записи и точность не проверяются
+ни синтетикой, ни ретроспективным прогоном.
+
+`shadow-decode` требует явный свежий `--out` под тем же приватным bench. Его отчёт фиксирует
+`effectivePromptSha256`: SHA-256 UTF-8 фактической строки после декодирования файла и `.Trim()`
+(без BOM в хеше); для нейтрального плеча — явный `null`. Импорт сравнивает этот хеш с заявленной
+подсказкой, а не только длину. Старые отчёты с одной длиной не подтверждают выбор; вручную
+переносить такие данные в подтверждённые плечи нельзя. Независимо проверенные архивные пары
+могут подаваться отдельно в предвычисленном манифесте с установленными хешами и происхождением.

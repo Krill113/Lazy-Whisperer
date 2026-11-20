@@ -11,6 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="..\LWhisper.UI.WPF\Services\SegmentTextFilter.cs" Link="SegmentTextFilter.cs" />
     <ProjectReference Include="..\LWhisper.Core\LWhisper.Core.csproj" />
     <ProjectReference Include="..\LWhisper.SpeechEngine\LWhisper.SpeechEngine.csproj" />
   </ItemGroup>

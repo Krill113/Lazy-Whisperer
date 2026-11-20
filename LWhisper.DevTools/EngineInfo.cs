@@ -46,6 +46,10 @@ public sealed class EngineInfo
     /// это неотличимо.
     /// </summary>
     public int PromptChars { get; set; }
+    public string? EffectivePromptSha256 { get; set; }
+
+    internal static string? HashPrompt(string? prompt) => string.IsNullOrWhiteSpace(prompt) ? null :
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(prompt))).ToLowerInvariant();
 
     public static EngineInfo Collect(CliOptions options, string modelPath, string? runtimeInfo)
     {
@@ -75,7 +79,8 @@ public sealed class EngineInfo
             Gpu = false,
             DumpEnabled = AudioDumpSink.Enabled,
             DumpDirectory = AudioDumpSink.Enabled ? AudioDumpSink.SessionDirectory : null,
-            PromptChars = options.InitialPrompt?.Length ?? 0
+            PromptChars = options.InitialPrompt?.Length ?? 0,
+            EffectivePromptSha256 = HashPrompt(options.InitialPrompt)
         };
     }
 
