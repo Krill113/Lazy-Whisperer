@@ -97,9 +97,14 @@ jobs:
             "${{ env.OUTPUT_DIR }}/WebRtcVad.dll",
             "${{ env.OUTPUT_DIR }}/wpfgfx_cor3.dll",
             "${{ env.OUTPUT_DIR }}/THIRD-PARTY-NOTICES.txt",
-            "${{ env.OUTPUT_DIR }}/runtimes",
-            "${{ env.OUTPUT_DIR }}/runtimes/win-x64/whisper.dll"
+            "${{ env.OUTPUT_DIR }}/local-dictation-parakeet.mjs",
+            "${{ env.OUTPUT_DIR }}/runtimes/vulkan/win-x64/ggml-vulkan-whisper.dll"
           )
+          foreach ($dir in 'runtimes/win-x64', 'runtimes/vulkan/win-x64') {
+            foreach ($dll in 'whisper.dll', 'ggml-whisper.dll', 'ggml-base-whisper.dll', 'ggml-cpu-whisper.dll') {
+              $required += "${{ env.OUTPUT_DIR }}/$dir/$dll"
+            }
+          }
           foreach ($i in $required) { if (-not (Test-Path $i)) { Write-Error "MISSING: $i"; exit 1 } }
           Write-Host "Artifact contract OK"
 

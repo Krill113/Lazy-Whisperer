@@ -33,8 +33,8 @@
 
   <ItemGroup>
     <!-- D7: нативные рантаймы Whisper живут в дистрибутиве (UI.WPF), не в движке-библиотеке -->
-    <PackageReference Include="Whisper.net.Runtime" Version="1.9.0" />
-    <PackageReference Include="Whisper.net.Runtime.Vulkan" Version="1.9.0" />
+    <PackageReference Include="Whisper.net.Runtime" Version="1.9.0" GeneratePathProperty="true" />
+    <PackageReference Include="Whisper.net.Runtime.Vulkan" Version="1.9.0" GeneratePathProperty="true" />
     <PackageReference Include="Hardcodet.NotifyIcon.Wpf" Version="2.0.1" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="Serilog" Version="4.3.0" />
@@ -44,5 +44,17 @@
     <PackageReference Include="System.Text.Json" Version="10.0.2" />
     <PackageReference Include="WebRtcVadSharp" Version="1.3.2" />
   </ItemGroup>
+
+  <!-- Whisper.net загружает эти DLL по пути на диске, а не из single-file bundle. -->
+  <Target Name="PublishWhisperWin64Libraries" AfterTargets="Publish"
+          Condition="'$(RuntimeIdentifier)' == 'win-x64' and '$(PublishSingleFile)' == 'true'">
+    <ItemGroup>
+      <_WhisperCpu Include="$(PkgWhisper_net_Runtime)/build/win-x64/*.dll" />
+      <_WhisperVulkan Include="$(PkgWhisper_net_Runtime_Vulkan)/build/win-x64/*.dll" />
+    </ItemGroup>
+    <Error Condition="'@(_WhisperCpu)' == '' or '@(_WhisperVulkan)' == ''" Text="Missing restored Whisper CPU or Vulkan libraries for win-x64." />
+    <Copy SourceFiles="@(_WhisperCpu)" DestinationFolder="$(PublishDir)/runtimes/win-x64" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_WhisperVulkan)" DestinationFolder="$(PublishDir)/runtimes/vulkan/win-x64" SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>
