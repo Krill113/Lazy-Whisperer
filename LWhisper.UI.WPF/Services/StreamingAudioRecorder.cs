@@ -14,6 +14,8 @@ namespace LWhisper.UI.WPF.Services
     {
         private WaveInEvent? _waveIn;
         private MemoryStream? _currentSegmentBuffer;
+        internal bool CaptureReviewAudio { get; set; }
+        private ReviewAudioBuffer? _reviewAudio;
         private readonly int _sampleRate = 16000;
         private readonly int _channels = 1;
         private readonly int _bitsPerSample = 16;
@@ -100,6 +102,7 @@ namespace LWhisper.UI.WPF.Services
 
             _isRecording = true;
             _isStopping = false;
+            _reviewAudio = CaptureReviewAudio ? new ReviewAudioBuffer(120 * 32000) : null;
             _currentSegmentBuffer = new MemoryStream();
             _lastSpeechTime = DateTime.Now;
             _consecutiveSilenceMs = 0;
@@ -137,6 +140,7 @@ namespace LWhisper.UI.WPF.Services
             // CP1: сырой поток сессии, до VAD и до pre-roll — то, что VAD выбросил, тоже сохраняется.
             // При выключенном LWHISPER_DEBUG_AUDIO это один статический bool-чек, без аллокаций.
             AudioDumpSink.AppendSessionPcm(e.Buffer, 0, e.BytesRecorded);
+            _reviewAudio?.Append(e.Buffer, e.BytesRecorded);
 
             // W0: поднять RecorderReady на первом фрейме (driver реально запустился)
             if (!_recorderReadyRaised)
@@ -386,6 +390,13 @@ namespace LWhisper.UI.WPF.Services
                 _preRollBuffer.Clear();
                 _preRollBufferBytes = 0;
             }
+        }
+
+        internal AudioData TakeReviewAudio()
+        {
+            var pcm = Interlocked.Exchange(ref _reviewAudio, null)?.Take() ?? Array.Empty<byte>();
+            return new AudioData { RawData = pcm, SampleRate = _sampleRate, Channels = _channels,
+                BitsPerSample = _bitsPerSample, Duration = TimeSpan.FromSeconds(pcm.Length / 32000d) };
         }
 
         public async Task<AudioData> StopRecordingAsync()

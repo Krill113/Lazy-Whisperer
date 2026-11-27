@@ -1,0 +1,43 @@
+<Window x:Class="LWhisper.UI.WPF.Views.ReplacementDictionaryWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Словарь автозамен" Width="620" Height="580" MinWidth="350" MinHeight="300"
+        ShowInTaskbar="False" WindowStartupLocation="CenterOwner">
+    <DockPanel Margin="12">
+        <WrapPanel DockPanel.Dock="Bottom" HorizontalAlignment="Right" Margin="0,8,0,0">
+            <Button x:Name="SaveButton" Content="_Сохранить" Padding="12,4" Margin="0,0,8,0" Click="Save_Click"/>
+            <Button Content="_Отмена" Padding="12,4" IsCancel="True"/>
+        </WrapPanel>
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <TextBlock Text="Словарь сохраняется отдельно от настроек. Пример: и террис → Итерис." TextWrapping="Wrap"/>
+                <TextBlock x:Name="Status" TextWrapping="Wrap" Foreground="DarkRed" Margin="0,6"/>
+                <ListView x:Name="Rules" Height="154" SelectionChanged="Rules_SelectionChanged" AutomationProperties.Name="Правила автозамены">
+                    <ListView.View>
+                        <GridView>
+                            <GridViewColumn Header="Как распознаётся" Width="176" DisplayMemberBinding="{Binding Source}"/>
+                            <GridViewColumn Header="Как должно быть" Width="176" DisplayMemberBinding="{Binding Target}"/>
+                            <GridViewColumn Header="Включено" Width="82" DisplayMemberBinding="{Binding EnabledText}"/>
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+                <Label Content="_Как распознаётся" Target="{Binding ElementName=SourceText}"/>
+                <TextBox x:Name="SourceText" TextChanged="Draft_Changed"/>
+                <Label Content="К_ак должно быть" Target="{Binding ElementName=TargetText}"/>
+                <TextBox x:Name="TargetText" TextChanged="Draft_Changed"/>
+                <CheckBox x:Name="EnabledBox" Content="_Включено" IsChecked="True" Margin="0,6" Checked="Draft_Changed" Unchecked="Draft_Changed"/>
+                <TextBlock x:Name="HintText" TextWrapping="Wrap"/>
+                <WrapPanel Margin="0,4">
+                    <Button Content="_Добавить" Click="Add_Click" Margin="0,0,8,0"/>
+                    <Button x:Name="EditButton" Content="_Изменить выбранное" Click="Edit_Click" Margin="0,0,8,0"/>
+                    <Button x:Name="DeleteButton" Content="_Удалить выбранное" Click="Delete_Click"/>
+                </WrapPanel>
+                <TextBlock Text="Для сохранения правки строки сначала нажмите «Добавить» или «Изменить выбранное»." TextWrapping="Wrap"/>
+                <Label Content="_До: тестовая фраза" Target="{Binding ElementName=TestInput}"/>
+                <TextBox x:Name="TestInput" TextChanged="Draft_Changed"/>
+                <Label Content="_После" Target="{Binding ElementName=TestOutput}"/>
+                <TextBox x:Name="TestOutput" IsReadOnly="True" TextWrapping="Wrap"/>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

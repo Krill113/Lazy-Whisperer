@@ -48,15 +48,21 @@ namespace LWhisper.UI.WPF.Views
         public bool GpuCheckboxNow => UseGpuCheckBox.IsChecked == true;
 
         private readonly bool _gpuDisabledByGuard;
+        private readonly ReplacementDictionaryStore? _dictionaryStore;
+        private readonly Action<DictionarySnapshot>? _dictionarySaved;
 
         /// <param name="engineDeviceStatus">Где сейчас работает Whisper — показывается под чекбоксом GPU.</param>
         /// <param name="gpuDisabledByGuard">GPU выключен защитой от сбоев драйвера — чекбокс показывается снятым.</param>
         public SettingsWindow(AppSettings currentSettings, List<string> audioDevices,
             UpdateService? updateService = null, UpdateInfo? availableUpdate = null,
-            string? engineDeviceStatus = null, bool gpuDisabledByGuard = false)
+            string? engineDeviceStatus = null, bool gpuDisabledByGuard = false,
+            ReplacementDictionaryStore? dictionaryStore = null, Action<DictionarySnapshot>? dictionarySaved = null)
         {
             _gpuDisabledByGuard = gpuDisabledByGuard;
+            _dictionaryStore = dictionaryStore;
+            _dictionarySaved = dictionarySaved;
             InitializeComponent();
+            ReplacementDictionaryButton.IsEnabled = _dictionaryStore != null;
 
             // Полная копия: окно не видит часть полей (позиция виджета, флаги GPU), и ручное
             // перечисление их теряло при «Сохранить», а общий Streaming менялся даже при «Отмене»
@@ -71,6 +77,14 @@ namespace LWhisper.UI.WPF.Views
             LoadSettings();
             LoadAudioDevices(audioDevices);
             InitializeUpdateSection();
+        }
+
+        private void ReplacementDictionaryButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_dictionaryStore == null) return;
+            var dictionary = new ReplacementDictionaryWindow(_dictionaryStore) { Owner = this };
+            if (dictionary.ShowDialog() == true && dictionary.SavedSnapshot is { } snapshot)
+                _dictionarySaved?.Invoke(snapshot);
         }
 
         /// <summary>

@@ -494,6 +494,16 @@ namespace LWhisper.SpeechEngine
             return floats;
         }
 
+        /// <summary>Создаёт независимый процессор полного сеанса для локальной перепроверки. Утилизировать до распознавателя.</summary>
+        public WhisperProcessor CreateFullSessionReviewProcessor()
+        {
+            if (!_isInitialized || _factory == null || !_isUsingGpu)
+                throw new InvalidOperationException("GPU recognizer is not initialized.");
+            var builder = _factory.CreateBuilder().WithLanguage("ru").WithNoContext().WithThreads(8);
+            ((BeamSearchSamplingStrategyBuilder)builder.WithBeamSearchSamplingStrategy()).WithBeamSize(5);
+            return builder.Build();
+        }
+
         public void Dispose()
         {
             _processor?.Dispose();

@@ -19,6 +19,12 @@ namespace LWhisper.UI.WPF
                 UpdateApplier.RunAndExit(args); // не возвращается
             }
 
+            if (args.Length == 2 && args[0] == "--review-turbo")
+            {
+                Environment.Exit(Services.LocalDictationReview.RunTurboWorkerAsync(args[1]).GetAwaiter().GetResult());
+                return;
+            }
+
             // App.xaml пуст (нет StartupUri/ресурсов) — генератор не создаёт InitializeComponent,
             // вся инициализация в App.OnStartup
             var app = new App();

@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <Resource Include="Resources\app_icon.ico" />
+    <None Update="local-dictation-parakeet.mjs" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
   </ItemGroup>
 
   <ItemGroup>

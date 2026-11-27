@@ -13,6 +13,8 @@ namespace LWhisper.UI.WPF.Views
         private DispatcherTimer? _autoInsertTimer;
         private int _secondsRemaining;
         private bool _userEdited;
+        private bool _isFinal;
+        private bool _programmaticText;
         private bool _autoInsertEnabled = true;
 
         public event Action<string>? InsertRequested;
@@ -41,8 +43,9 @@ namespace LWhisper.UI.WPF.Views
         /// <param name="startTimer">Запустить ли таймер сразу</param>
         public void ShowWithText(string text, int autoInsertDelaySeconds, bool autoInsertEnabled = true, bool startTimer = true)
         {
-            TextBox.Text = text;
+            SetDisplayedText(text);
             _userEdited = false;
+            _isFinal = startTimer;
             _secondsRemaining = autoInsertDelaySeconds;
             _autoInsertEnabled = autoInsertEnabled;
             
@@ -66,8 +69,10 @@ namespace LWhisper.UI.WPF.Views
         /// <param name="startTimer">Запустить ли таймер после обновления</param>
         public void UpdateText(string text, bool startTimer = false)
         {
-            TextBox.Text = text;
+            StopAutoInsertTimer();
+            SetDisplayedText(text);
             _userEdited = false;
+            _isFinal = startTimer;
             
             // Запустить таймер только если требуется И автовставка включена
             if (startTimer && _autoInsertEnabled && _secondsRemaining > 0)
@@ -76,6 +81,23 @@ namespace LWhisper.UI.WPF.Views
                 StopAutoInsertTimer();
                 StartAutoInsertTimer();
             }
+        }
+
+        internal void PublishRecognizedText(string text, bool isFinal, bool startTimer)
+        {
+            _isFinal = isFinal;
+            if (_userEdited) return;
+            SetDisplayedText(text);
+            if (startTimer && _autoInsertEnabled && _secondsRemaining > 0 && _autoInsertTimer == null)
+                StartAutoInsertTimer();
+        }
+
+        private void SetDisplayedText(string text)
+        {
+            if (TextBox.Text == text) return;
+            _programmaticText = true;
+            try { TextBox.Text = text; }
+            finally { _programmaticText = false; }
         }
 
         private void StartAutoInsertTimer()
@@ -129,7 +151,7 @@ namespace LWhisper.UI.WPF.Views
 
         private void TextBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
         {
-            if (IsLoaded && TextBox.IsFocused)
+            if (IsLoaded && !_programmaticText)
             {
                 _userEdited = true;
                 StopAutoInsertTimer();
@@ -173,7 +195,7 @@ namespace LWhisper.UI.WPF.Views
             
             _autoInsertEnabled = AutoInsertCheckBox.IsChecked == true;
             
-            if (_autoInsertEnabled && !string.IsNullOrEmpty(TextBox?.Text) && _secondsRemaining > 0)
+            if (_isFinal && !_userEdited && _autoInsertEnabled && !string.IsNullOrEmpty(TextBox?.Text) && _secondsRemaining > 0)
             {
                 // Включена - запустить таймер
                 if (_autoInsertTimer == null)

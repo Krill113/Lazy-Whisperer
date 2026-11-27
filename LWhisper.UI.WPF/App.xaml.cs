@@ -29,6 +29,17 @@ namespace LWhisper.UI.WPF
         private SettingsManager? _settingsManager;
         private AppSettings _settings;
         private bool _isRecording;
+        private readonly ReplacementDictionaryStore _dictionaryStore = new(System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LWhisper", "replacement-dictionary.json"));
+        private LWhisper.Core.Text.ReplacementDictionary _dictionary = new(Array.Empty<ReplacementRule>());
+        private RecognizedTextPublication? _publication;
+        private readonly LocalDictationReview _dictationReview = new();
+        private readonly CancellationTokenSource _reviewLifetime = new();
+        private bool CanReviewDictation => _speechRecognizer is LWhisper.SpeechEngine.WhisperSpeechRecognizer { IsUsingGpu: true }
+            && _settings.UseGpu && !_effectiveForceCpu && string.Equals(_settings.RecognitionLanguage, "ru", StringComparison.OrdinalIgnoreCase)
+            && _dictationReview.IsAvailable;
+        private void OnDictionarySaved(DictionarySnapshot snapshot) => _dictionary = new(snapshot.Rules);
+
         private string _lastRecognizedText = string.Empty; // Для кнопки показа текста
         private Mutex? _singleInstanceMutex;
         private UpdateService? _updateService;
@@ -148,6 +159,7 @@ namespace LWhisper.UI.WPF
                     Top = _settings.WidgetPositionY >= 0 ? _settings.WidgetPositionY : defaultY
                 };
 
+                OnDictionarySaved(_dictionaryStore.Load());
                 _widget.RecordingStarted += OnRecordingStarted;
                 _widget.RecordingStopped += OnRecordingStopped;
                 _widget.PositionChanged += OnWidgetPositionChanged;
@@ -179,6 +191,7 @@ namespace LWhisper.UI.WPF
                 StartBackgroundUpdateCheck();
 
                 Log.Information("Приложение инициализировано");
+                Log.Information("[Review] Перепроверка русской диктовки доступна: {Available}", CanReviewDictation);
             }
             catch (Exception ex)
             {
@@ -544,28 +557,18 @@ namespace LWhisper.UI.WPF
                         await _recognitionManager.ProcessSegmentAsync(audioData);
                     };
                     
-                    // Подписаться на обновления распознанных сегментов для UI
-                    _recognitionManager.SegmentRecognized += (segmentId, text) =>
+                    var presentationManager = _recognitionManager;
+                    presentationManager.FullTextUpdated += _ =>
                     {
+                        var publication = _publication;
                         Application.Current.Dispatcher.Invoke(() =>
                         {
-                            UpdatePreviewWindowWithSegment(text);
+                            if (publication != null && ReferenceEquals(publication, _publication) &&
+                                ReferenceEquals(presentationManager, _recognitionManager))
+                                PublishRecognizedText(presentationManager.GetFullText(), isFinal: false);
                         });
                     };
-                    
-                    // Подписаться на обновления полного текста
-                    _recognitionManager.FullTextUpdated += (fullText) =>
-                    {
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            _lastRecognizedText = fullText;
-                            if (_previewWindow != null && _previewWindow.IsVisible)
-                            {
-                                _previewWindow.UpdateText(fullText, startTimer: false);
-                            }
-                        });
-                    };
-                    
+
                     // Подписаться на событие автостопа
                     streamingRecorder.RecordingAutoStopped += () =>
                     {
@@ -599,17 +602,43 @@ namespace LWhisper.UI.WPF
             }
         }
         
-        /// <summary>
-        /// Обновить окно предпросмотра с новым сегментом текста
-        /// </summary>
-        private void UpdatePreviewWindowWithSegment(string segmentText)
+        private async Task PublishFinalWithReviewAsync(AudioData? audio, string baseline)
         {
-            if (_previewWindow == null || !_previewWindow.IsVisible)
+            var publication = _publication;
+            if (publication == null || _reviewLifetime.IsCancellationRequested) return;
+            var text = baseline;
+            if (audio?.RawData is { Length: > 0 and <= 3840000 } && CanReviewDictation && publication.CanPresent)
             {
-                // Если окно не открыто, открыть его с первым сегментом
-                ShowPreviewWindow(segmentText, startTimer: false);
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    text = await _dictationReview.ReviewAsync(audio, baseline, _reviewLifetime.Token);
+                    if (string.IsNullOrWhiteSpace(text)) text = baseline;
+                    Log.Information("[Review] Финал: изменён={Changed}, ожидание={Elapsed}мс", text != baseline, clock.ElapsedMilliseconds);
+                }
+                catch (Exception ex) when (!_reviewLifetime.IsCancellationRequested)
+                {
+                    Log.Warning("[Review] Перепроверка недоступна ({Error}); сохранён исходный текст", ex.GetType().Name);
+                }
+                catch (OperationCanceledException) { return; }
             }
-            // Полный текст обновляется через событие FullTextUpdated
+            if (!_reviewLifetime.IsCancellationRequested && ReferenceEquals(publication, _publication))
+                PublishRecognizedText(text, isFinal: true);
+        }
+
+        private void PublishRecognizedText(string raw, bool isFinal)
+        {
+            if (_publication == null || string.IsNullOrWhiteSpace(raw)) return;
+            var publication = _publication;
+            var text = publication.Publish(raw);
+            if (isFinal) _publication = null;
+            _lastRecognizedText = text;
+            publication.PresentIfAllowed(() =>
+            {
+                if (_previewWindow == null || !_previewWindow.IsVisible)
+                    ShowPreviewWindow(text, startTimer: false);
+                _previewWindow?.PublishRecognizedText(text, isFinal, isFinal && _settings.AutoInsertEnabled);
+            });
         }
 
         private void OnShowMicrophoneRequested()
@@ -654,7 +683,8 @@ namespace LWhisper.UI.WPF
             try
             {
                 var devices = _audioRecorder?.GetAvailableDevices() ?? new List<string>();
-                var settingsWindow = new SettingsWindow(_settings, devices, _updateService, _availableUpdate, _engineDeviceStatus, _gpuGuard?.IsDisabled == true);
+                var settingsWindow = new SettingsWindow(_settings, devices, _updateService, _availableUpdate, _engineDeviceStatus, _gpuGuard?.IsDisabled == true,
+                    _dictionaryStore, OnDictionarySaved);
                 settingsWindow.UpdateFound += update => _availableUpdate = update;
 
                 // Модальное окно тоже регистрируется: немодальный путь (из PreviewWindow) видит его и не
@@ -694,7 +724,8 @@ namespace LWhisper.UI.WPF
             try
             {
                 var devices = _audioRecorder?.GetAvailableDevices() ?? new List<string>();
-                _settingsWindow = new SettingsWindow(_settings, devices, _updateService, _availableUpdate, _engineDeviceStatus, _gpuGuard?.IsDisabled == true);
+                _settingsWindow = new SettingsWindow(_settings, devices, _updateService, _availableUpdate, _engineDeviceStatus, _gpuGuard?.IsDisabled == true,
+                    _dictionaryStore, OnDictionarySaved);
                 _settingsWindow.UpdateFound += update => _availableUpdate = update;
 
                 _settingsWindow.Closed += (s, e) =>
@@ -867,6 +898,7 @@ namespace LWhisper.UI.WPF
 
                 AudioDumpSink.BeginDictation(UpdateService.IsDevBuild,
                     _settings.SaveLocalDictations, _settings.LocalDictationsDirectory);
+                _publication = new RecognizedTextPublication(_dictionary);
                 _isRecording = true;
                 _widget?.SetState(WidgetState.Initializing);
                 _trayManager?.SetIcon(TrayIconState.Recording);
@@ -881,11 +913,14 @@ namespace LWhisper.UI.WPF
                     ShowPreviewWindow("🎤 Запись... Говорите!", startTimer: false);
                 }
                 
+                if (_audioRecorder is StreamingAudioRecorder streaming)
+                    streaming.CaptureReviewAudio = CanReviewDictation;
                 _audioRecorder?.StartRecording();
                 Log.Debug("Запись начата (потоковый режим: {Streaming})", _useStreamingMode);
             }
             catch (Exception ex)
             {
+                _publication = null;
                 Log.Error(ex, "Ошибка начала записи");
                 _isRecording = false;
                 _widget?.SetState(WidgetState.Idle);
@@ -932,7 +967,9 @@ namespace LWhisper.UI.WPF
                     Log.Debug("Остановка потоковой записи");
                     
                     // Остановить запись (последний сегмент будет отправлен через FinalSegmentReady)
-                    var audioData = await _audioRecorder!.StopRecordingAsync();
+                    var recorder = _audioRecorder!;
+                    await recorder.StopRecordingAsync();
+                    var audioData = (recorder as StreamingAudioRecorder)?.TakeReviewAudio();
                     
                     // Дождаться завершения всех задач распознавания
                     if (_recognitionManager != null)
@@ -944,17 +981,12 @@ namespace LWhisper.UI.WPF
                         
                         if (!string.IsNullOrWhiteSpace(fullText))
                         {
-                            _lastRecognizedText = fullText;
                             
                             Log.Information("Потоковое распознавание завершено. Итоговый текст ({Length} символов): {Preview}...",
                                 fullText.Length, 
                                 fullText.Length > 100 ? fullText.Substring(0, 100) : fullText);
                             
-                            // Обновить окно предпросмотра с финальным текстом и ТЕПЕРЬ запустить таймер
-                            if (_previewWindow != null && _previewWindow.IsVisible)
-                            {
-                                _previewWindow.UpdateText(fullText, startTimer: _settings.AutoInsertEnabled);
-                            }
+                            await PublishFinalWithReviewAsync(audioData, fullText);
                         }
                         else
                         {
@@ -998,7 +1030,8 @@ namespace LWhisper.UI.WPF
                 {
                     // ОБЫЧНЫЙ РЕЖИМ
                     // Показать окно СРАЗУ с текстом "Распознавание..."
-                    ShowPreviewWindow("Распознавание...", startTimer: false);
+                    if (_publication?.CanPresent == true)
+                        ShowPreviewWindow("Распознавание...", startTimer: false);
                     
                     var audioData = await _audioRecorder!.StopRecordingAsync();
                     Log.Debug("Запись остановлена, длительность: {Duration}", audioData.Duration);
@@ -1016,14 +1049,7 @@ namespace LWhisper.UI.WPF
 
                     if (result.Success && !string.IsNullOrEmpty(result.Text))
                     {
-                        _lastRecognizedText = result.Text; // Сохранить последний текст
-                        
-                        // Обновить текст в уже открытом окне и ТЕПЕРЬ запустить таймер
-                        if (_previewWindow != null && _previewWindow.IsVisible)
-                        {
-                            _previewWindow.UpdateText(result.Text, startTimer: _settings.AutoInsertEnabled);
-                            Log.Debug("Текст обновлен в PreviewWindow, таймер запущен: {TimerStarted}", _settings.AutoInsertEnabled);
-                        }
+                        await PublishFinalWithReviewAsync(audioData, result.Text);
                     }
                     else
                     {
@@ -1062,6 +1088,7 @@ namespace LWhisper.UI.WPF
             {
                 // Только здесь: любая ветка выхода — успех, пустой результат, исключение — обязана
                 // снять запрет, иначе запись перестанет запускаться до перезапуска приложения.
+                _publication = null;
                 _isFinalizingRecording = false;
             }
         }
@@ -1112,6 +1139,7 @@ namespace LWhisper.UI.WPF
                 _previewWindow.Closed += (s, e) =>
                 {
                     Log.Debug("PreviewWindow закрыто");
+                    _publication?.DismissPreview();
                     _previewWindow = null;
                 };
 
@@ -1213,6 +1241,7 @@ namespace LWhisper.UI.WPF
 
         protected override void OnExit(ExitEventArgs e)
         {
+            _reviewLifetime.Cancel();
             SaveWidgetPosition();
             _hotkeyManager?.UnregisterHotkey();
             _trayManager?.Dispose();
